@@ -21,6 +21,12 @@ def build_parser() -> argparse.ArgumentParser:
     data_sub.add_parser("build", help="clean, pair and split into data/processed/corpus.parquet")
     gen = data_sub.add_parser("generate-stories", help="write Claude stories for the story prompts")
     gen.add_argument("--limit", type=int, default=None, help="max stories to write this run")
+
+    feats = sub.add_parser("features", help="feature extraction and analysis")
+    feats_sub = feats.add_subparsers(dest="features_command", required=True)
+    build = feats_sub.add_parser("build", help="compute features for all paired texts (cached)")
+    build.add_argument("--no-perplexity", action="store_true", help="skip the GPT-2 features")
+    feats_sub.add_parser("analyze", help="per-feature effect sizes + distribution plots (train split)")
     return parser
 
 
@@ -29,9 +35,9 @@ def main(argv: list[str] | None = None) -> int:
     cfg = load_config(args.config) if args.config else load_config()
     set_seed(cfg["seed"])
 
-    if args.command == "data":
+    if args.command in ("data", "features"):
         try:
-            return _run_data(args, cfg)
+            return _run_data(args, cfg) if args.command == "data" else _run_features(args, cfg)
         except RuntimeError as err:  # e.g. missing API key: show the message, not a traceback
             print(f"error: {err}", file=sys.stderr)
             return 1
@@ -66,6 +72,31 @@ def _run_data(args: argparse.Namespace, cfg: dict) -> int:
             limit=args.limit,
         )
         print(stats)
+    return 0
+
+
+def _run_features(args: argparse.Namespace, cfg: dict) -> int:
+    import pandas as pd
+
+    processed = resolve_path(cfg, "processed")
+    corpus = pd.read_parquet(processed / "corpus.parquet")
+    paired = corpus[corpus["has_pair"]].reset_index(drop=True)
+
+    if args.features_command == "build":
+        from hd.features.pipeline import compute_features
+
+        scorer = None
+        if not args.no_perplexity:
+            from hd.features.perplexity import GPT2Scorer
+
+            scorer = GPT2Scorer()
+            print(f"GPT-2 on {scorer.device}")
+        feats = compute_features(paired, processed / "features.parquet", scorer)
+        print(f"features for {len(feats)} texts -> {processed / 'features.parquet'}")
+    elif args.features_command == "analyze":
+        from hd.eval.feature_analysis import run_analysis
+
+        run_analysis(cfg)
     return 0
 
 

@@ -29,6 +29,25 @@ A running glossary. Terms are added as we meet them.
 - **Hash-based split:** deciding the split from a fingerprint of the prompt's id. Same prompt, same
   split, forever, even as data grows.
 - **Cache (LLM):** saving each API response on disk keyed by its inputs, so rerunning is free.
+- **Feature:** a number computed from a text that describes some property of it (e.g. average
+  sentence length). A classifier learns from features instead of reading the raw words.
+- **Burstiness:** how much sentence length (or word surprise) swings up and down. People mix short
+  and long sentences; LLM prose tends to be more even.
+- **Perplexity / surprisal:** how unexpected a text is to a language model. Surprisal is the
+  per-word version, -log(probability), measured in nats. LLM-written text is more predictable, so it
+  scores lower.
+- **GLTR-style features:** the share of words that were the model's #1 guess (`top1_frac`) or in its top
+  10 (`top10_frac`).
+- **Lexical diversity / MATTR:** how varied the vocabulary is. Plain type-token ratio shrinks as text
+  gets longer, so we use a moving-window version (MATTR) that doesn't.
+- **POS tag (part of speech):** noun, verb, adjective... POS *n-grams* are short runs of tags
+  (`PRON AUX ADJ`) that capture grammar habits without depending on specific words.
+- **ROC-AUC:** the chance that a randomly chosen AI text scores higher than a randomly chosen human text
+  on some measure. 0.5 is a coin flip, 1.0 is perfect, 0.0 is perfectly backwards (human always higher).
+- **Length-matched (stratified) AUC:** AUC computed inside bands of similar text length and then
+  averaged, so a length difference between classes can't create the result.
+- **Univariate:** looking at one feature at a time. Useful for explaining, but the classifier uses
+  many together.
 - **Virtual environment (venv):** an isolated folder of Python packages for one project, so
   projects don't clash. `uv sync` builds ours in `.venv/`.
 
@@ -64,3 +83,24 @@ That is the whole idea behind reproducible runs.
 **1 experiment to try:** run `uv run python -I -c "from hd.data.clean import normalize_text as n; print(n('I do n\'t know , but she ca n\'t go .'))"`.
 Then, in a notebook, load `data/raw/hc3_reddit_eli5.jsonl`, compare the share of human vs ChatGPT answers
 that contain `" ,"`, and then ask: if you trained a classifier on the *raw* text, what would it learn?
+
+
+---
+
+## Milestone 2: features
+
+**3 takeaways**
+1. **A near-perfect result needs a hostile review.** GPT-2 features hit AUC ~0.99. Before believing it
+   I checked that it survives within length bands (it does: 0.98-1.00), because short texts get higher
+   perplexity just from having less context. It was real: ChatGPT text is very predictable to GPT-2.
+2. **The tools you trust have limits too.** My length-banding helper turned out to under-correct with 8
+   bands (a pure-length feature scored 0.60), so I raised it to 16 and documented the residual
+   0.50-0.60 in the worst case. Test your fixes on a case where you know the answer.
+3. **Some hypotheses fail, and that is a result.** Em-dashes and my stock-phrase list showed no signal
+   on 2022-era ChatGPT. The strongest *interpretable* tell is sentence rhythm (burstiness), which is
+   also something the humanizer can act on.
+
+**1 experiment to try:** in `uv run python`, score two texts with the scorer from `hd.features.perplexity`:
+a plain, textbook-style sentence and a quirky, unusual one. Compare `mean_surprisal`. Then rewrite the
+plain sentence by swapping in rarer words and see how far the number moves. This is exactly the lever the
+humanizer will pull, and the one an independent detector may not care about.
