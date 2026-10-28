@@ -6,6 +6,9 @@ scikit-learn>=1.4
 matplotlib>=3.8
 pyyaml>=6.0
 
+# data extra
+pyarrow>=15
+
 # nlp extra
 spacy>=3.7
 textstat>=0.7
