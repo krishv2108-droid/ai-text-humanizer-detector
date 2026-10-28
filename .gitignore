@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.cache/
+.env
+.DS_Store
+.ipynb_checkpoints/
+
+# Raw/processed data can be large; sources are documented in data/DATA_SOURCES.md
+data/raw/*
+data/processed/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep

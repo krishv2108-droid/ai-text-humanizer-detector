@@ -1,0 +1,26 @@
+# Mirror of pyproject.toml for pip users. Preferred setup: `uv sync` (see README).
+# Python 3.11+ required.
+numpy>=1.26
+pandas>=2.1
+scikit-learn>=1.4
+matplotlib>=3.8
+pyyaml>=6.0
+
+# nlp extra
+spacy>=3.7
+textstat>=0.7
+
+# ml extra
+torch>=2.2
+transformers>=4.40
+datasets>=2.19
+sentence-transformers>=3.0
+
+# llm extra
+anthropic>=0.40
+
+# app extra
+streamlit>=1.35
+
+# dev
+pytest>=8.0

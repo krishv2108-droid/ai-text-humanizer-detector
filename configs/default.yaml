@@ -1,0 +1,30 @@
+seed: 42
+
+paths:
+  raw: data/raw
+  processed: data/processed
+  splits: data/splits
+  results: results
+  cache: .cache/llm
+
+splits:
+  # Fractions are applied per prompt/topic group, never per text, so a human/AI
+  # pair for the same prompt always lands on the same side.
+  train: 0.70
+  val: 0.15
+  test: 0.15
+
+genres: [story, essay, email, casual]
+
+llm:
+  generation_model: claude-haiku-5-5   # cheap, bulk AI-story generation
+  humanizer_model: claude-haiku-5-5    # upgrade later if budget allows
+  max_retries: 5
+  cache: true
+
+loop:
+  max_iterations: 4
+  flag_threshold: 0.5   # AI probability at/above this counts as "flagged"
+
+guardrails:
+  min_semantic_similarity: 0.80   # below this a rewrite is flagged as drifted
