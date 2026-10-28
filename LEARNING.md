@@ -77,6 +77,16 @@ A running glossary. Terms are added as we meet them.
   the score moves. Model-agnostic, and group-level versions are more reliable when features are correlated.
 - **Independent / out-of-distribution evaluation:** scoring with a detector that never saw our data, to
   avoid mistaking "fooled my own detector" for "reads as human".
+- **Sentence embedding:** a list of numbers (here 384) that represents a sentence's meaning, so similar
+  meanings are close together. *Cosine similarity* measures how close two embeddings are (1 = same
+  direction, ~0 = unrelated).
+- **Meaning drift / dropped / invented content:** a rewrite whose overall meaning moved; original sentences
+  that have no counterpart in the rewrite; rewrite sentences that match nothing in the original.
+- **Readability (Flesch-Kincaid grade):** a formula from sentence length and syllables that estimates the
+  US school grade needed to read a text. Used to show a rewrite did not become much harder or easier.
+- **Prompt ablation:** running variants of a prompt that differ by one block (techniques, detector feedback)
+  to measure what each block contributes.
+- **Dry run:** running a command that shows what it would do (here, the exact prompt) without doing it.
 - **Virtual environment (venv):** an isolated folder of Python packages for one project, so
   projects don't clash. `uv sync` builds ours in `.venv/`.
 
@@ -175,3 +185,25 @@ feature family buys on its own.
 **1 experiment to try:** run `uv run hd detect --external` on (a) a paragraph you wrote, (b) the same
 paragraph pasted into a chatbot with "rewrite this more formally", and (c) a mix of both. Compare our
 detector with desklib, and look at which feature group drives each score. Where do they disagree, and why?
+
+
+---
+
+## Milestone 5: the humanizer
+
+**3 takeaways**
+1. **Test a safety check with the failures it is meant to catch.** I simulated bad rewrites on real text and
+   measured the guardrails. That showed whole-text similarity barely moves when 30% of the sentences are
+   deleted (median 0.98), so my first "coverage" check was weak; and my typo threshold caught only 31% of
+   typo-laden text until I tightened it. A guardrail you never tested is a hope, not a guardrail.
+2. **Feedback is only useful if it is specific and grounded.** "Vary your sentences" is easy to ignore;
+   "your variation is 0.39, human stories average 0.62, and 4 of 15 sentences open with 'However'" is
+   something a rewriter can act on. The human profile (percentiles of human text per genre) is what makes
+   the numbers meaningful.
+3. **Say what is untested.** The humanizer has not met a real LLM yet. The README says so, and the guardrail
+   thresholds are marked provisional until false-positive rates can be measured on genuine rewrites.
+
+**1 experiment to try:** run `uv run hd humanize --file <an AI-written text of your own> --dry-run` and read
+the prompt. Is any instruction something you would ignore or misread? Edit `TECHNIQUES` in
+`hd/humanizer/prompts.py`, rerun, and see how the prompt changes. When you have a key, compare `--strategy
+naive` against `--strategy full` on the same text.

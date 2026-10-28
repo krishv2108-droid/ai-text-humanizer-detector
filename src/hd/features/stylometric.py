@@ -77,6 +77,16 @@ def count_hedges(text: str) -> int:
     return len(_HEDGE_RE.findall(text))
 
 
+def find_stock_phrases(text: str) -> list[str]:
+    """The stock phrases present in `text` (lowercased, in order, no duplicates)."""
+    return list(dict.fromkeys(m.group(0).lower() for m in _STOCK_RE.finditer(text)))
+
+
+def find_transitions(text: str) -> list[str]:
+    """Stock transition words/phrases present in `text` (lowercased, in order, no duplicates)."""
+    return list(dict.fromkeys(m.group(0).lower() for m in _TRANSITION_RE.finditer(text)))
+
+
 def count_stock_phrases(text: str) -> int:
     return len(_STOCK_RE.findall(text))
 

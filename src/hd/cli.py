@@ -35,6 +35,18 @@ def build_parser() -> argparse.ArgumentParser:
     det_sub.add_parser("train-sentence", help="fit the per-sentence model (needs GPT-2; ~3 min the first time)")
     det_sub.add_parser("eval-external", help="score validation texts with the independent detector")
 
+    hum = sub.add_parser("humanizer", help="humanizer commands")
+    hum_sub = hum.add_subparsers(dest="humanizer_command", required=True)
+    hum_sub.add_parser("calibrate-guardrails", help="simulate rewrite failures; measure how the guardrails respond")
+
+    humanize = sub.add_parser("humanize", help="rewrite AI text to read as human; show before/after scores")
+    humanize.add_argument("text", nargs="?", help="the text (or use --file / stdin)")
+    humanize.add_argument("--file", help="read the text from a file")
+    humanize.add_argument("--genre", choices=["story", "essay", "casual"], default="story")
+    humanize.add_argument("--strategy", choices=["naive", "craft", "feedback", "full"], default="full")
+    humanize.add_argument("--dry-run", action="store_true", help="show the prompt that would be sent; call no API")
+    humanize.add_argument("--external", action="store_true", help="also score before/after with the independent detector")
+
     detect = sub.add_parser("detect", help="P(AI), per-sentence breakdown and drivers for a text")
     detect.add_argument("text", nargs="?", help="the text (or use --file / stdin)")
     detect.add_argument("--file", help="read the text from a file")
@@ -49,8 +61,9 @@ def main(argv: list[str] | None = None) -> int:
     cfg = load_config(args.config) if args.config else load_config()
     set_seed(cfg["seed"])
 
-    if args.command in ("data", "features", "detector", "detect"):
-        runners = {"data": _run_data, "features": _run_features, "detector": _run_detector, "detect": _run_detect}
+    if args.command in ("data", "features", "detector", "detect", "humanizer", "humanize"):
+        runners = {"data": _run_data, "features": _run_features, "detector": _run_detector, "detect": _run_detect,
+                   "humanizer": _run_humanizer, "humanize": _run_humanize}  # fmt: skip
         try:
             return runners[args.command](args, cfg)
         except RuntimeError as err:  # e.g. missing API key: show the message, not a traceback
@@ -128,6 +141,77 @@ def _run_detector(args: argparse.Namespace, cfg: dict) -> int:
         from hd.eval.external_eval import run_external_eval
 
         run_external_eval(cfg)
+    return 0
+
+
+def _run_humanizer(args: argparse.Namespace, cfg: dict) -> int:
+    if args.humanizer_command == "calibrate-guardrails":
+        import pandas as pd
+
+        from hd.humanizer.calibrate import run_calibration
+
+        pd.set_option("display.width", 250)
+        pd.set_option("display.max_columns", 40)
+        print(run_calibration(cfg).T.to_string())
+    return 0
+
+
+def _read_text(args: argparse.Namespace) -> str:
+    if args.file:
+        return open(args.file).read()
+    return args.text if args.text else sys.stdin.read()
+
+
+def _run_humanize(args: argparse.Namespace, cfg: dict) -> int:
+    from hd.detector.explain import Detector
+    from hd.humanizer.feedback import HumanProfile
+    from hd.humanizer.pipeline import checker_for, humanize_once, load_thresholds
+    from hd.humanizer.rewrite import Humanizer
+
+    text = _read_text(args)
+    detector = Detector.load(cfg)
+    profile = HumanProfile.load_or_build(cfg, detector.scorer)
+    llm = cfg["llm"]
+
+    if args.dry_run:
+        humanizer = Humanizer(None, llm["humanizer_model"], profile)  # type: ignore[arg-type]
+        before = detector.analyze(text)
+        system, user = humanizer.build_request(before.text, args.genre, args.strategy, before)
+        print(f"[dry run: nothing sent] strategy={args.strategy} genre={args.genre} P(AI) now {before.prob_ai:.3f}\n")
+        print("--- SYSTEM ---\n" + system + "\n\n--- USER ---\n" + user)
+        return 0
+
+    from hd.config import resolve_path
+    from hd.humanizer.guardrails import SentenceEmbedder
+    from hd.llm import make_client
+
+    humanizer = Humanizer(make_client(cfg, resolve_path(cfg, "cache")), llm["humanizer_model"], profile, llm["humanizer_effort"])
+    external = None
+    if args.external:
+        from hd.detector.external import DesklibDetector
+
+        external = DesklibDetector()
+    checker = checker_for(cfg, SentenceEmbedder(), detector.scorer, profile, args.genre)
+    report = humanize_once(detector, humanizer, checker, text, args.genre, args.strategy, external)
+
+    cutoffs = load_thresholds(cfg)
+    ours_cut = cutoffs.get("ours", {}).get(args.genre if args.genre in cutoffs.get("ours", {}) else "all")
+    def verdict(p, cut):
+        return "" if cut is None else ("  FLAGGED" if p > cut else "  not flagged") + f" at the 5%-false-positive cutoff ({cut:.3f})"
+
+    print("=== REWRITE ===\n" + report.rewrite.text + "\n")
+    print(f"BEFORE  P(AI) = {report.before.prob_ai:.3f}{verdict(report.before.prob_ai, ours_cut)}")
+    print(f"AFTER   P(AI) = {report.after.prob_ai:.3f}{verdict(report.after.prob_ai, ours_cut)}")
+    if external is not None:
+        ext_cut = cutoffs.get("external", {}).get(args.genre if args.genre in cutoffs.get("external", {}) else "all")
+        print(f"independent detector: before {report.external_before:.3f} -> after {report.external_after:.3f}{verdict(report.external_after, ext_cut)}")
+    print("\nFeature comparison (human median = typical human text of this genre):")
+    print(report.comparison.round(3).to_string(index=False))
+    g = report.guardrails
+    print(f"\nGuardrails: {'OK' if g.ok else 'FLAGGED'}  similarity {g.similarity:.2f}, length x{g.length_ratio:.2f}, "
+          f"reading grade {g.fk_grade_before:.1f} -> {g.fk_grade_after:.1f}")
+    for flag in g.flags + report.rewrite.warnings:
+        print(f"  ! {flag}")
     return 0
 
 

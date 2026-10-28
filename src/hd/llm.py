@@ -109,10 +109,14 @@ def make_client(cfg: dict, cache_dir: Path) -> LLMClient:
     """Real client wrapped in the disk cache. Fails early with a clear message if no key is set."""
     import os
 
+    from hd.config import load_env
+
+    load_env()
     if not os.environ.get("ANTHROPIC_API_KEY"):
         raise RuntimeError(
-            "ANTHROPIC_API_KEY is not set. Export it in your shell (never commit it), e.g.\n"
-            "  export ANTHROPIC_API_KEY=...   # then rerun the command"
+            "ANTHROPIC_API_KEY is not set. Either export it in your shell, or put this line in a file "
+            "named .env in the project root (git-ignored, never committed):\n"
+            "  ANTHROPIC_API_KEY=your-key-here"
         )
     inner = AnthropicClient(max_retries=cfg["llm"]["max_retries"])
     return CachedClient(inner, cache_dir) if cfg["llm"]["cache"] else inner

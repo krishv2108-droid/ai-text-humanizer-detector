@@ -37,12 +37,13 @@ Optional extras are added as milestones need them: `--extra data`, `--extra nlp`
 uv sync --extra data --extra llm --extra nlp --extra ml
 ```
 
-The Anthropic API key is read from the `ANTHROPIC_API_KEY` environment variable (never committed).
+The Anthropic API key is read from the `ANTHROPIC_API_KEY` environment variable, or from a git-ignored
+`.env` file in the project root containing the single line `ANTHROPIC_API_KEY=your-key` (never committed).
 
 ## Project status
 
 Built in small milestones, one commit each (see `git log`); per-milestone notes are in
-`LEARNING.md`. Current: **M4 - explanations + independent detector** (done). AI stories still wait for an API key.
+`LEARNING.md`. Current: **M5 - humanizer** (built and tested offline; real LLM rewrites not yet run, see below). AI stories still wait for an API key.
 
 ## What gives AI text away? (preliminary, M2)
 
@@ -129,6 +130,48 @@ Validation split, raw human vs raw AI text ([results/external_metrics.csv](resul
 - **Anecdote, not a result:** on one hand-written paragraph mixing casual and stock-AI sentences, our
   detector said 0.002 and desklib 1.000. One example proves nothing, but it fits the concern that ours leans
   on GPT-2 predictability, which a few quirky specifics can move.
+
+## The humanizer (M5)
+
+```bash
+uv run hd humanize --file story.txt --dry-run     # shows the exact prompt; calls no API, needs no key
+uv run hd humanize --file story.txt --external    # rewrite + before/after scores + guardrails (needs a key)
+```
+
+The humanizer asks an LLM (`claude-haiku-5-5` by default) to rewrite AI text. The prompt is assembled from
+blocks, so M7 can ablate them: **naive** (just "make it sound human"), **craft** (+ genre-specific writing
+techniques), **feedback** (+ what our detector found wrong with *this* draft) and **full** (all of it, plus
+the most machine-like sentences called out). The feedback compares the draft with real human text of the
+same genre and states the numbers, for example (a textbook AI lighthouse story, `--dry-run`):
+
+> Sentence lengths are too uniform (variation 0.39; human story texts typically 0.62). Break the rhythm: put a few very short sentences or fragments next to long, winding ones.
+> Stock connectives are overused (4 of 15 sentences open with one; found: 'however', 'moreover', 'furthermore', 'ultimately').
+> Few contractions (0.0 per 100 words; human typically 1.4).
+
+Every rewrite is checked by guardrails: meaning (sentence-embedding similarity, share of original sentences
+dropped, share of rewrite sentences invented), length, Flesch-Kincaid readability before/after, and
+typo/gibberish signals (new words that fragment into 3+ GPT-2 word pieces; an optional GPT-2 surprisal
+ceiling). The prompt forbids typos and the guardrails look for them: nothing is "humanized" by injecting errors.
+
+**Status, stated plainly:** no API key has been available, so the humanizer has only been run through a
+mock client and `--dry-run`. Nothing here yet shows that real rewrites fool any detector. That is M6-M7.
+
+How well do the guardrails work? Simulated failures on 150 real validation texts each
+([results/guardrail_calibration.csv](results/guardrail_calibration.csv)); share flagged:
+
+| Simulated "rewrite" | Flagged |
+|---|---|
+| Text unchanged (should never be flagged) | 0% |
+| Unrelated text of the same genre | 100% |
+| The human answer to the same prompt (same topic, different content) | 96% |
+| 5% of long words misspelled | 75% |
+| 30% of sentences swapped for sentences of other texts | 41% |
+| 30% of sentences deleted | 51% (almost all from the length check; the content checks catch only 6%) |
+
+**Limitation:** the guardrails reliably catch wholesale drift and typos, but only partly catch *modest*
+content loss, and a rewrite that deletes sentences but keeps the length (padding elsewhere) would slip through. Sentences inside one story or answer are semantically close, so a missing sentence still has a
+near neighbour in the embedding space. False-positive rates on genuine paraphrases are unmeasured until real
+rewrites exist; thresholds in `configs/default.yaml` are provisional until then.
 
 ## Data
 

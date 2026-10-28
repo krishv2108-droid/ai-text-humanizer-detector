@@ -33,6 +33,7 @@ data:
 llm:
   generation_model: claude-haiku-5-5   # cheap, bulk AI-story generation
   humanizer_model: claude-haiku-5-5    # upgrade later if budget allows
+  humanizer_effort: medium
   generation_effort: medium
   generation_max_tokens: 2000
   max_retries: 5                       # SDK retries 429/5xx with backoff
@@ -43,4 +44,13 @@ loop:
   flag_threshold: 0.5   # AI probability at/above this counts as "flagged"
 
 guardrails:
-  min_semantic_similarity: 0.80   # below this a rewrite is flagged as drifted
+  # Provisional. `hd humanizer calibrate-guardrails` simulates failures (see results/guardrail_calibration.csv);
+  # false-positive rates on REAL rewrites are unmeasured until an API key is available.
+  min_doc_similarity: 0.80   # whole-text embedding similarity to the original
+  dropped_sim: 0.50          # original sentence with no rewrite sentence above this = dropped
+  max_dropped_frac: 0.20
+  invented_sim: 0.35         # rewrite sentence with no original sentence above this = invented
+  max_invented_frac: 0.35
+  length_ratio: [0.7, 1.4]   # the prompt asks for roughly the same length (+/-20%)
+  max_fk_delta: 3.0          # Flesch-Kincaid grade change
+  max_novel_rare_rate: 0.01  # share of words that are both new and rare (typo/gibberish signal)

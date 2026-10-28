@@ -1,0 +1,7 @@
+scenario,similarity_p05,similarity_p50,similarity_p95,dropped_frac_p05,dropped_frac_p50,dropped_frac_p95,invented_frac_p05,invented_frac_p50,invented_frac_p95,length_ratio_p05,length_ratio_p50,length_ratio_p95,fk_delta_p05,fk_delta_p50,fk_delta_p95,novel_rare_rate_p05,novel_rare_rate_p50,novel_rare_rate_p95,flagged_rate,caught_by: meaning drift,caught_by: dropped content,caught_by: invented content,caught_by: length changed too much,caught_by: readability shifted,caught_by: possible typos or gibberish,n
+drop30,0.893,0.979,1.0,0.0,0.0,0.25,0.0,0.0,0.0,0.367,0.706,1.0,-1.463,0.0,0.949,0.0,0.0,0.0,0.507,0.0,0.06,0.0,0.493,0.013,0.0,150
+identical,1.0,1.0,1.0,0.0,0.0,0.0,0.0,0.0,0.0,1.0,1.0,1.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,150
+same_topic,0.301,0.66,0.874,0.0,0.345,1.0,0.0,0.182,0.75,0.145,0.452,2.204,-7.294,-1.727,6.251,0.0,0.005,0.055,0.96,0.78,0.667,0.3,0.78,0.453,0.46,150
+swap30,0.626,0.911,1.0,0.0,0.0,0.237,0.0,0.273,0.592,0.731,1.0,1.24,-2.495,-0.053,2.332,0.0,0.0,0.018,0.407,0.233,0.06,0.3,0.04,0.06,0.153,150
+typos5,0.974,0.995,1.0,0.0,0.0,0.0,0.0,0.0,0.0,1.0,1.0,1.0,-0.273,-0.061,0.09,0.0,0.016,0.034,0.747,0.0,0.0,0.0,0.0,0.0,0.747,150
+unrelated,-0.064,0.05,0.357,1.0,1.0,1.0,0.762,1.0,1.0,0.184,0.796,2.047,-6.316,0.036,6.343,0.0,0.005,0.069,1.0,1.0,1.0,0.987,0.573,0.473,0.407,150
