@@ -1265,6 +1265,9 @@ dependencies = [
 app = [
     { name = "streamlit" },
 ]
+data = [
+    { name = "pyarrow" },
+]
 llm = [
     { name = "anthropic" },
 ]
@@ -1291,6 +1294,7 @@ requires-dist = [
     { name = "matplotlib", specifier = ">=3.8" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "pandas", specifier = ">=2.1" },
+    { name = "pyarrow", marker = "extra == 'data'", specifier = ">=15" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "scikit-learn", specifier = ">=1.4" },
     { name = "sentence-transformers", marker = "extra == 'ml'", specifier = ">=3.0" },
@@ -1300,7 +1304,7 @@ requires-dist = [
     { name = "torch", marker = "extra == 'ml'", specifier = ">=2.2" },
     { name = "transformers", marker = "extra == 'ml'", specifier = ">=4.40" },
 ]
-provides-extras = ["nlp", "ml", "llm", "app"]
+provides-extras = ["data", "nlp", "ml", "llm", "app"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=8.0" }]

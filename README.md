@@ -38,7 +38,21 @@ The Anthropic API key is read from the `ANTHROPIC_API_KEY` environment variable 
 ## Project status
 
 Built in small milestones, one commit each (see `git log`); per-milestone notes are in
-`LEARNING.md`. Current: **M0 - scaffold**.
+`LEARNING.md`. Current: **M1 - data** (done; AI stories wait for an API key).
+
+## Data
+
+```bash
+uv sync --extra data --extra llm
+uv run hd data download            # ~104 MB from Hugging Face into data/raw/
+uv run hd data build               # clean, pair, split -> data/processed/corpus.parquet
+export ANTHROPIC_API_KEY=...       # your key, never committed
+uv run hd data generate-stories    # Claude stories for the 300 prompts (resumable, cached)
+uv run hd data build               # rebuild so the new stories join the corpus
+```
+
+Sources, licenses, cleaning and known confounds: [data/DATA_SOURCES.md](data/DATA_SOURCES.md).
+Genres: story, essay, casual (email deferred). The test split is locked in code until final evaluation.
 
 ## Layout
 

@@ -12,11 +12,13 @@ dependencies = [
 ]
 
 # Heavy dependencies are optional extras so early milestones install quickly.
+#   uv sync --extra data  (pyarrow, to read parquet)
 #   uv sync --extra nlp   (spaCy, textstat)
 #   uv sync --extra ml    (PyTorch, transformers, sentence-transformers)
 #   uv sync --extra llm   (Anthropic SDK)
 #   uv sync --extra app   (Streamlit)
 [project.optional-dependencies]
+data = ["pyarrow>=15"]
 nlp = ["spacy>=3.7", "textstat>=0.7"]
 ml = ["torch>=2.2", "transformers>=4.40", "datasets>=2.19", "sentence-transformers>=3.0"]
 llm = ["anthropic>=0.40"]

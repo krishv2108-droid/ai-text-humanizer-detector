@@ -1,0 +1,13 @@
+genre,split,label,texts,median_words
+casual,test,0,150,81.5
+casual,test,1,150,174.5
+casual,train,0,712,87.5
+casual,train,1,712,175.5
+casual,val,0,138,84.0
+casual,val,1,138,168.0
+essay,test,0,264,86.0
+essay,test,1,264,175.0
+essay,train,0,1109,80.0
+essay,train,1,1109,179.0
+essay,val,0,227,70.0
+essay,val,1,227,170.0

@@ -14,12 +14,28 @@ splits:
   val: 0.15
   test: 0.15
 
-genres: [story, essay, email, casual]
+genres: [story, essay, casual]   # email deferred: no clean paired dataset (see DATA_SOURCES.md)
+
+data:
+  # Stories: one human story per WritingPrompts prompt, one Claude story to be generated for it.
+  # Prompts are ordered by a stable hash, so raising story_pairs later only appends new ones.
+  story_pairs: 300
+  story_words: [200, 600]      # keep human stories in this range (also bounds generation cost)
+  min_words: 25                # minimum words for HC3 answers
+  # HC3 pairs (1 human + 1 ChatGPT answer per question) kept per source file.
+  pairs_per_source:
+    open_qa: 400
+    finance: 400
+    medicine: 400
+    wiki_csai: 400
+    reddit_eli5: 1000
 
 llm:
   generation_model: claude-haiku-5-5   # cheap, bulk AI-story generation
   humanizer_model: claude-haiku-5-5    # upgrade later if budget allows
-  max_retries: 5
+  generation_effort: medium
+  generation_max_tokens: 2000
+  max_retries: 5                       # SDK retries 429/5xx with backoff
   cache: true
 
 loop:
