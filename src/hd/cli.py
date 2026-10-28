@@ -19,7 +19,7 @@ def build_parser() -> argparse.ArgumentParser:
     data_sub = data.add_subparsers(dest="data_command", required=True)
     data_sub.add_parser("download", help="download approved raw datasets into data/raw/")
     data_sub.add_parser("build", help="clean, pair and split into data/processed/corpus.parquet")
-    gen = data_sub.add_parser("generate-stories", help="write Claude stories for the story prompts")
+    gen = data_sub.add_parser("generate-stories", help="write LLM stories for the story prompts (resumable; stops cleanly at a rate limit)")
     gen.add_argument("--limit", type=int, default=None, help="max stories to write this run")
 
     feats = sub.add_parser("features", help="feature extraction and analysis")
@@ -34,6 +34,9 @@ def build_parser() -> argparse.ArgumentParser:
     base.add_argument("--variants", nargs="*", default=None, help="subset of variants (default: all)")
     det_sub.add_parser("train-sentence", help="fit the per-sentence model (needs GPT-2; ~3 min the first time)")
     det_sub.add_parser("eval-external", help="score validation texts with the independent detector")
+
+    sub.add_parser("llm", help="LLM provider commands").add_subparsers(dest="llm_command", required=True).add_parser(
+        "check", help="verify the key and models; show your account's rate limits")
 
     hum = sub.add_parser("humanizer", help="humanizer commands")
     hum_sub = hum.add_subparsers(dest="humanizer_command", required=True)
@@ -61,9 +64,9 @@ def main(argv: list[str] | None = None) -> int:
     cfg = load_config(args.config) if args.config else load_config()
     set_seed(cfg["seed"])
 
-    if args.command in ("data", "features", "detector", "detect", "humanizer", "humanize"):
+    if args.command in ("data", "features", "detector", "detect", "humanizer", "humanize", "llm"):
         runners = {"data": _run_data, "features": _run_features, "detector": _run_detector, "detect": _run_detect,
-                   "humanizer": _run_humanizer, "humanize": _run_humanize}  # fmt: skip
+                   "humanizer": _run_humanizer, "humanize": _run_humanize, "llm": _run_llm}  # fmt: skip
         try:
             return runners[args.command](args, cfg)
         except RuntimeError as err:  # e.g. missing API key: show the message, not a traceback
@@ -99,7 +102,9 @@ def _run_data(args: argparse.Namespace, cfg: dict) -> int:
             effort=cfg["llm"]["generation_effort"],
             limit=args.limit,
         )
-        print(stats)
+        print({k: v for k, v in stats.items() if k != "message"})
+        if stats["message"]:
+            print(stats["message"] + "\nWork so far is saved; run the same command later to continue.")
     return 0
 
 
@@ -141,6 +146,33 @@ def _run_detector(args: argparse.Namespace, cfg: dict) -> int:
         from hd.eval.external_eval import run_external_eval
 
         run_external_eval(cfg)
+    return 0
+
+
+def _run_llm(args: argparse.Namespace, cfg: dict) -> int:
+    from hd.llm import PROVIDERS, OpenAICompatClient, api_key
+
+    llm = cfg["llm"]
+    provider = llm["provider"]
+    key = api_key(provider)  # raises a clear error if missing
+    print(f"provider: {provider}  (key found, {len(key)} characters)")
+    if provider == "anthropic":
+        print("limits are not probed for Anthropic; make a call to test the key.")
+        return 0
+    client = OpenAICompatClient(PROVIDERS[provider]["base_url"], key, max_retries=2, seed=cfg.get("seed"))
+    for role in ("generation_model", "humanizer_model"):
+        model = llm[role]
+        if role == "humanizer_model" and model == llm["generation_model"]:
+            print(f"{role}: same model as generation_model")
+            continue
+        info = client.probe(model)
+        print(f"\n{role}: {model}")
+        for k, v in info.items():
+            print(f"  {k}: {v}")
+        tpm = float(info["limit_tokens_per_minute"] or 0)
+        if tpm:
+            print(f"  -> per minute, roughly {tpm / 1000:.0f}k tokens: about {int(tpm // 900)} stories or {int(tpm // 2800)} humanizer calls")
+    print("\nDaily token limits are not in the response headers; see https://console.groq.com/settings/limits")
     return 0
 
 

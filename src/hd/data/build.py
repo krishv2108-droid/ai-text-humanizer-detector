@@ -51,7 +51,7 @@ def build_corpus(cfg: dict[str, Any]) -> pd.DataFrame:
                     "id": make_id("ai-story", item["prompt_id"], item["generator"]),
                     "prompt_id": item["prompt_id"],
                     "genre": "story",
-                    "source": "claude_generated",
+                    "source": "llm_generated",
                     "label": 1,
                     "generator": item["generator"],
                     "prompt": prompts[item["prompt_id"]],

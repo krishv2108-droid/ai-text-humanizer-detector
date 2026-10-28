@@ -17,7 +17,7 @@ splits:
 genres: [story, essay, casual]   # email deferred: no clean paired dataset (see DATA_SOURCES.md)
 
 data:
-  # Stories: one human story per WritingPrompts prompt, one Claude story to be generated for it.
+  # Stories: one human story per WritingPrompts prompt, one LLM-written story to be generated for it.
   # Prompts are ordered by a stable hash, so raising story_pairs later only appends new ones.
   story_pairs: 300
   story_words: [200, 600]      # keep human stories in this range (also bounds generation cost)
@@ -31,12 +31,18 @@ data:
     reddit_eli5: 1000
 
 llm:
-  generation_model: claude-haiku-5-5   # cheap, bulk AI-story generation
-  humanizer_model: claude-haiku-5-5    # upgrade later if budget allows
-  humanizer_effort: medium
-  generation_effort: medium
-  generation_max_tokens: 2000
-  max_retries: 5                       # SDK retries 429/5xx with backoff
+  # Free-tier Groq. Limits are small (tokens per minute and per day), so every call is cached, batch jobs
+  # are resumable, and `hd llm check` reports your account's real limits. Switch provider to "anthropic"
+  # (and models to claude-* ids) if you ever use an Anthropic key.
+  provider: groq
+  generation_model: llama-3.3-70b-versatile   # writes the AI side of the story pairs
+  humanizer_model: llama-3.3-70b-versatile    # rewrites AI text
+  generation_effort: null     # only used by reasoning models such as openai/gpt-oss-120b (low|medium|high)
+  humanizer_effort: null
+  generation_max_tokens: 2000 # ceiling; each story's budget is derived from its target length
+  max_retries: 6              # SDK retries 429/5xx using the provider's retry-after
+  min_interval_s: 2.0         # spacing between requests (guards the per-minute request limit)
+  reasoning_headroom: 1500    # extra completion tokens for reasoning models' hidden thinking
   cache: true
 
 loop:

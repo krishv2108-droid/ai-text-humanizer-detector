@@ -27,7 +27,25 @@ _PREFACE = re.compile(r"^\s*(here(?:'s| is)|sure|certainly|rewritten|revised|bel
 _FENCE = re.compile(r"^```[a-z]*\n|\n```\s*$")
 
 
-def clean_output(raw: str) -> tuple[str, list[str]]:
+_TITLE_PUNCT = re.compile(r"[.,;:!?]")
+
+
+def _strip_title(text: str, draft: str | None) -> tuple[str, bool]:
+    """Drop a leading title line ("The Lighthouse Keeper") that chat models add despite instructions.
+
+    Human stories have no titles, so one would be a formatting giveaway. Conservative on purpose: at most
+    8 words, no punctuation, followed by more text, and not a line the draft itself started with.
+    """
+    head, sep, rest = text.partition("\n\n")
+    bare = head.strip().strip("\"'*#_ ")
+    if not sep or "\n" in head.strip() or not bare or len(bare.split()) > 8 or _TITLE_PUNCT.search(bare):
+        return text, False
+    if draft is not None and head.strip() in draft:
+        return text, False
+    return rest.strip(), True
+
+
+def clean_output(raw: str, draft: str | None = None) -> tuple[str, list[str]]:
     """Strip chatty wrapping the model sometimes adds, then normalize like every other text."""
     warnings, text = [], raw.strip()
     text = _FENCE.sub("", text)
@@ -38,6 +56,9 @@ def clean_output(raw: str) -> tuple[str, list[str]]:
         text = text[1:-1]
     if text.startswith('"""') and text.endswith('"""'):
         text = text[3:-3]
+    text, had_title = _strip_title(text.strip(), draft)
+    if had_title:
+        warnings.append("removed a title line")
     text = normalize_text(text)
     if has_markdown(text):
         warnings.append("output contains markdown")
@@ -66,7 +87,7 @@ class Humanizer:
                                     max_tokens=min(6000, int(words * 2.5) + 400), effort=self.effort)  # fmt: skip
         if resp.stop_reason == "max_tokens":
             raise RuntimeError("the rewrite was cut off at the token limit; try again or shorten the text")
-        text, warnings = clean_output(resp.text)
+        text, warnings = clean_output(resp.text, draft)
         if not text:
             raise RuntimeError("the model returned an empty rewrite")
         return RewriteResult(text, strategy, system, user, resp.input_tokens, resp.output_tokens, resp.cached, warnings)

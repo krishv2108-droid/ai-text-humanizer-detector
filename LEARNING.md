@@ -87,6 +87,14 @@ A running glossary. Terms are added as we meet them.
 - **Prompt ablation:** running variants of a prompt that differ by one block (techniques, detector feedback)
   to measure what each block contributes.
 - **Dry run:** running a command that shows what it would do (here, the exact prompt) without doing it.
+- **Rate limit (RPM / TPM / RPD / TPD):** a provider's cap on requests or tokens per minute or per day. Free
+  tiers are small, so the real constraint on this project is the *daily token budget*, not the request count.
+- **Token:** the unit language models read and write, roughly three quarters of an English word. Limits and
+  prices are measured in tokens; a 500-word story is about 650 tokens out.
+- **Reasoning model:** a model that "thinks" in hidden tokens before answering (e.g. gpt-oss). Those tokens
+  count against output and rate limits even though you never see them.
+- **Provider-agnostic client:** code that talks to the LLM through one small interface, so swapping Anthropic
+  for Groq changed one module and a config line, not the pipeline.
 - **Virtual environment (venv):** an isolated folder of Python packages for one project, so
   projects don't clash. `uv sync` builds ours in `.venv/`.
 
@@ -207,3 +215,23 @@ detector with desklib, and look at which feature group drives each score. Where 
 the prompt. Is any instruction something you would ignore or misread? Edit `TECHNIQUES` in
 `hd/humanizer/prompts.py`, rerun, and see how the prompt changes. When you have a key, compare `--strategy
 naive` against `--strategy full` on the same text.
+
+
+---
+
+## Provider change: Groq free tier instead of Anthropic
+
+**3 takeaways**
+1. **A small interface paid for itself.** Because every LLM call went through `complete(system, prompt, ...)`,
+   adding Groq meant a new client class, a config switch and new tests; the generator, humanizer and
+   guardrails did not change.
+2. **On a free tier, plan around the scarcest limit.** A story costs ~900 tokens and a humanizer call ~2,800,
+   so the daily *token* cap decides how many experiments are possible, not the per-minute request cap. The
+   client therefore paces from response headers, stops cleanly at the daily limit, and every call is cached so
+   a stopped run loses nothing.
+3. **The generator is part of the experiment.** AI text from Llama-3.3-70B is a different thing from HC3's
+   2022 ChatGPT. Results on stories and on essay/casual are not directly comparable, and the README says so.
+
+**1 experiment to try:** run `uv run hd llm check` and compare your account's per-minute token limit with the
+costs above. How many stories fit in a minute? In a day (check console.groq.com/settings/limits)? Then change
+`generation_model` to `llama-3.1-8b-instant` and see how the limits differ.

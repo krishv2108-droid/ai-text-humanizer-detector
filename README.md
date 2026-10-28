@@ -37,8 +37,17 @@ Optional extras are added as milestones need them: `--extra data`, `--extra nlp`
 uv sync --extra data --extra llm --extra nlp --extra ml
 ```
 
-The Anthropic API key is read from the `ANTHROPIC_API_KEY` environment variable, or from a git-ignored
-`.env` file in the project root containing the single line `ANTHROPIC_API_KEY=your-key` (never committed).
+**LLM provider (free tier).** Story generation and the humanizer use a free [Groq](https://console.groq.com)
+key (`llm.provider: groq` in `configs/default.yaml`; `anthropic` is also supported). Put it in a git-ignored
+`.env` file in the project root containing the single line `GROQ_API_KEY=your-key` (never committed), or
+export it in your shell. Then:
+
+```bash
+uv run hd llm check      # verifies the key and models, and shows your account's real rate limits
+```
+
+Free tiers meter tokens per minute and per day. Every call is cached, the client paces itself from the
+provider's rate-limit headers, and batch jobs stop cleanly at a daily limit and resume where they left off.
 
 ## Project status
 
@@ -50,7 +59,7 @@ Built in small milestones, one commit each (see `git log`); per-milestone notes 
 ![Strongest single features, human vs AI](results/figures/feature_auc.png)
 
 Univariate, **length-matched** AUC on the **training split** of the two genres with data so far
-(essay and casual, human vs ChatGPT; stories arrive once the Claude stories are generated). Full table:
+(essay and casual, human vs ChatGPT; stories arrive once the LLM-written stories are generated). Full table:
 [results/feature_effects.csv](results/feature_effects.csv). Distributions:
 [results/figures/feature_distributions.png](results/figures/feature_distributions.png).
 
@@ -89,7 +98,7 @@ How to read this honestly:
 - **The interpretable features alone reach ~0.92 AUC; GPT-2 predictability adds the rest (~0.996).**
   Burstiness-type, punctuation and transition features carry real signal without any neural model.
 - **This is a detector for December-2022 ChatGPT (essay, casual), not for modern models.** Near-perfect
-  scores here say the task is easy for *that* AI text. Whether it holds on Claude-written stories, and on
+  scores here say the task is easy for *that* AI text. Whether it holds on LLM-written stories, and on
   rewrites designed to evade it, is exactly what M5-M7 measure.
 - Boosted trees fit the training set perfectly (train accuracy 1.00) yet validate at 0.982, so the
   validation number, not the training number, is the one to quote.
@@ -138,7 +147,7 @@ uv run hd humanize --file story.txt --dry-run     # shows the exact prompt; call
 uv run hd humanize --file story.txt --external    # rewrite + before/after scores + guardrails (needs a key)
 ```
 
-The humanizer asks an LLM (`claude-haiku-5-5` by default) to rewrite AI text. The prompt is assembled from
+The humanizer asks an LLM (`llama-3.3-70b-versatile` on Groq's free tier by default) to rewrite AI text. The prompt is assembled from
 blocks, so M7 can ablate them: **naive** (just "make it sound human"), **craft** (+ genre-specific writing
 techniques), **feedback** (+ what our detector found wrong with *this* draft) and **full** (all of it, plus
 the most machine-like sentences called out). The feedback compares the draft with real human text of the
@@ -153,7 +162,7 @@ dropped, share of rewrite sentences invented), length, Flesch-Kincaid readabilit
 typo/gibberish signals (new words that fragment into 3+ GPT-2 word pieces; an optional GPT-2 surprisal
 ceiling). The prompt forbids typos and the guardrails look for them: nothing is "humanized" by injecting errors.
 
-**Status, stated plainly:** no API key has been available, so the humanizer has only been run through a
+**Status, stated plainly:** no LLM key has been available yet, so the humanizer has only been run through a
 mock client and `--dry-run`. Nothing here yet shows that real rewrites fool any detector. That is M6-M7.
 
 How well do the guardrails work? Simulated failures on 150 real validation texts each
@@ -179,8 +188,8 @@ rewrites exist; thresholds in `configs/default.yaml` are provisional until then.
 uv sync --extra data --extra llm
 uv run hd data download            # ~104 MB from Hugging Face into data/raw/
 uv run hd data build               # clean, pair, split -> data/processed/corpus.parquet
-export ANTHROPIC_API_KEY=...       # your key, never committed
-uv run hd data generate-stories    # Claude stories for the 300 prompts (resumable, cached)
+uv run hd llm check                # key + limits (needs GROQ_API_KEY in .env)
+uv run hd data generate-stories    # LLM stories for the 300 prompts (resumable; stops cleanly at a daily limit)
 uv run hd data build               # rebuild so the new stories join the corpus
 ```
 
