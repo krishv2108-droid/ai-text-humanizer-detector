@@ -22,40 +22,12 @@ from sklearn.metrics import roc_auc_score
 
 from hd.config import resolve_path
 from hd.data.splits import load_split
+from hd.eval.metrics import stratified_auc  # noqa: F401  (re-exported for callers and tests)
+from hd.eval.style import AI_C, AXIS, GRID, HUMAN_C, INK, INK2, MUTED, SERIES, SURFACE, style_axes
 from hd.features.stylometric import FEATURE_GROUPS, feature_names
-
-# Chart tokens (light surface). Series colors are categorical slots 1-3 of the validated palette.
-SURFACE, INK, INK2, MUTED, GRID, AXIS = "#fcfcfb", "#0b0b0b", "#52514e", "#898781", "#e1e0d9", "#c3c2b7"
-SERIES = ["#2a78d6", "#eb6834", "#1baf7a"]
-HUMAN_C, AI_C = SERIES[0], SERIES[1]
 
 GENRE_ORDER = ["essay", "casual", "story"]
 FEATURE_TO_GROUP = {f: g for g, fs in FEATURE_GROUPS.items() for f in fs}
-
-
-def stratified_auc(x: np.ndarray, y: np.ndarray, n_words: np.ndarray, bins: int = 16, min_class: int = 10) -> float:
-    """ROC-AUC computed *within* text-length bands, then averaged (weighted by human*AI pair count).
-
-    Human and AI texts differ in length in our data, and many features (like language-model
-    perplexity) also drift with length. Comparing only texts of similar length means length can't be
-    what drives the number. Bins where either class has < `min_class` texts are skipped.
-
-    This reduces the length confound but does not eliminate it: texts inside one band still differ a
-    little in length by label. In a worst-case simulation (a feature that *is* length, 2-SD length gap)
-    it returns 0.50-0.60 instead of the raw 0.85+. Treat small values near 0.5 as "no signal", not as
-    exact zeros, and prefer features whose stratified AUC is far from 0.5.
-    """
-    edges = np.unique(np.quantile(n_words, np.linspace(0, 1, bins + 1)))
-    which = np.clip(np.searchsorted(edges, n_words, side="right") - 1, 0, len(edges) - 2)
-    num = den = 0.0
-    for b in range(len(edges) - 1):
-        m = which == b
-        n0, n1 = int((y[m] == 0).sum()), int((y[m] == 1).sum())
-        if n0 < min_class or n1 < min_class:
-            continue
-        num += n0 * n1 * roc_auc_score(y[m], x[m])
-        den += n0 * n1
-    return num / den if den else np.nan
 
 
 def effect_table(df: pd.DataFrame) -> pd.DataFrame:
@@ -91,14 +63,7 @@ def effect_table(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def _style(ax) -> None:
-    ax.set_facecolor(SURFACE)
-    for side in ("top", "right", "left"):
-        ax.spines[side].set_visible(False)
-    ax.spines["bottom"].set_color(AXIS)
-    ax.tick_params(colors=MUTED, labelsize=9, length=0)
-    ax.grid(axis="x", color=GRID, linewidth=1)
-    ax.set_axisbelow(True)
+_style = style_axes
 
 
 def _pretty(name: str) -> str:

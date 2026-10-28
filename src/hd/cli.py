@@ -27,6 +27,11 @@ def build_parser() -> argparse.ArgumentParser:
     build = feats_sub.add_parser("build", help="compute features for all paired texts (cached)")
     build.add_argument("--no-perplexity", action="store_true", help="skip the GPT-2 features")
     feats_sub.add_parser("analyze", help="per-feature effect sizes + distribution plots (train split)")
+
+    det = sub.add_parser("detector", help="detector commands")
+    det_sub = det.add_subparsers(dest="detector_command", required=True)
+    base = det_sub.add_parser("train-baseline", help="fit the feature-based detectors; report on the validation split")
+    base.add_argument("--variants", nargs="*", default=None, help="subset of variants (default: all)")
     return parser
 
 
@@ -35,9 +40,10 @@ def main(argv: list[str] | None = None) -> int:
     cfg = load_config(args.config) if args.config else load_config()
     set_seed(cfg["seed"])
 
-    if args.command in ("data", "features"):
+    if args.command in ("data", "features", "detector"):
+        runners = {"data": _run_data, "features": _run_features, "detector": _run_detector}
         try:
-            return _run_data(args, cfg) if args.command == "data" else _run_features(args, cfg)
+            return runners[args.command](args, cfg)
         except RuntimeError as err:  # e.g. missing API key: show the message, not a traceback
             print(f"error: {err}", file=sys.stderr)
             return 1
@@ -97,6 +103,14 @@ def _run_features(args: argparse.Namespace, cfg: dict) -> int:
         from hd.eval.feature_analysis import run_analysis
 
         run_analysis(cfg)
+    return 0
+
+
+def _run_detector(args: argparse.Namespace, cfg: dict) -> int:
+    if args.detector_command == "train-baseline":
+        from hd.detector.baseline import run_baseline
+
+        run_baseline(cfg, args.variants)
     return 0
 
 

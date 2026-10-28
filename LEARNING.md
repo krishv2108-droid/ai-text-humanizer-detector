@@ -48,6 +48,24 @@ A running glossary. Terms are added as we meet them.
   averaged, so a length difference between classes can't create the result.
 - **Univariate:** looking at one feature at a time. Useful for explaining, but the classifier uses
   many together.
+- **Logistic regression:** a linear classifier. It multiplies each (standardized) feature by a weight,
+  adds them, and squashes the result into a 0-1 probability. The weights are the explanation: positive
+  pushes toward "AI".
+- **Gradient-boosted trees:** many small decision trees added one after another, each fixing the last
+  one's mistakes. More flexible than linear (captures curves and interactions), harder to explain.
+- **Regularization (C):** a penalty that keeps weights small so the model doesn't memorize noise. In
+  scikit-learn's logistic regression, *smaller C = stronger penalty*.
+- **Cross-validation (grouped):** split the training data into folds, train on some and score on the
+  rest, rotate. "Grouped by prompt" keeps a human/AI pair together so the score isn't inflated.
+- **Precision / recall:** of the texts we call AI, how many are (precision); of the real AI texts, how
+  many we catch (recall). Here the positive class is AI.
+- **Confusion matrix:** the 2x2 table of right and wrong calls (human called human, human called AI...).
+- **Bootstrap confidence interval:** re-draw the evaluation set many times (here, whole prompts) with
+  replacement to see how much a metric would wobble by chance.
+- **Multicollinearity:** two features carrying nearly the same information. A linear model can give them
+  large opposite weights, so individual coefficients stop meaning anything.
+- **Permutation importance:** shuffle one feature and see how much the score drops. Misleading when
+  other features carry the same information (they cover for it).
 - **Virtual environment (venv):** an isolated folder of Python packages for one project, so
   projects don't clash. `uv sync` builds ours in `.venv/`.
 
@@ -104,3 +122,25 @@ that contain `" ,"`, and then ask: if you trained a classifier on the *raw* text
 a plain, textbook-style sentence and a quirky, unusual one. Compare `mean_surprisal`. Then rewrite the
 plain sentence by swapping in rarer words and see how far the number moves. This is exactly the lever the
 humanizer will pull, and the one an independent detector may not care about.
+
+
+---
+
+## Milestone 3: baseline detector
+
+**3 takeaways**
+1. **Interpretable features get you most of the way; a language model gets you the rest.** Stylometric
+   features alone reach val AUC ~0.92 (accuracy 0.86); adding GPT-2 predictability reaches ~0.996. That gap
+   matters for the humanizer: it can change rhythm and word choice, but GPT-2 predictability is much
+   harder to move on purpose.
+2. **Be skeptical of your own justifications.** I dropped `burstiness` as "redundant" with
+   `sent_len_cv`, and AUC fell by ~0.02: a monotone *transform* gives a linear model a curve, so it
+   wasn't redundant. I kept the drop for interpretability (the pair had +6/-6 coefficients) and said so.
+3. **Importance numbers have blind spots.** Permutation importance showed tiny values for every GPT-2
+   feature, because the four of them cover for each other when one is shuffled. Drop-a-whole-group
+   ablations (M7) answer the real question.
+
+**1 experiment to try:** open `results/coefficients_lr_style.csv` and `results/coefficients_lr_full.csv`.
+Notice how the coefficients move once the GPT-2 features are available. Then edit `VARIANTS` in
+`hd/detector/baseline.py` to add a variant with only the `rhythm` group and see how little AUC one
+feature family buys on its own.
