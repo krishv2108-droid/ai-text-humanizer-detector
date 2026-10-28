@@ -35,8 +35,14 @@ class GPT2Scorer:
 
     @torch.no_grad()
     def token_stats(self, texts: list[str]) -> list[dict[str, np.ndarray]]:
-        """Per-token surprisal (nats) and 'was it a top-1 / top-10 guess' flags, input order kept."""
-        encoded = [[self.bos] + self.tokenizer(t)["input_ids"][: self.max_tokens] for t in texts]
+        """Per-token surprisal (nats), rank of the true token, and its character span in the text.
+
+        Input order is kept. Only the first `max_tokens` tokens of a text are scored; `offsets` lets
+        callers map tokens back to sentences (later tokens simply have no entry).
+        """
+        enc = [self.tokenizer(t, return_offsets_mapping=True) for t in texts]
+        encoded = [[self.bos] + e["input_ids"][: self.max_tokens] for e in enc]
+        offsets = [np.asarray(e["offset_mapping"][: self.max_tokens], dtype=int).reshape(-1, 2) for e in enc]
         order = sorted(range(len(texts)), key=lambda i: len(encoded[i]))  # similar lengths per batch
         out: list[dict[str, np.ndarray] | None] = [None] * len(texts)
         for start in range(0, len(order), self.batch_size):
@@ -56,19 +62,19 @@ class GPT2Scorer:
             target_lp, rank = target_lp.cpu().numpy(), rank.cpu().numpy()
             for row, i in enumerate(idx):
                 n = len(encoded[i]) - 1
-                out[i] = {"surprisal": -target_lp[row, :n], "rank": rank[row, :n]}
+                out[i] = {"surprisal": -target_lp[row, :n], "rank": rank[row, :n], "offsets": offsets[i]}
         return out  # type: ignore[return-value]
 
     def features(self, texts: list[str]) -> list[dict[str, float]]:
-        rows = []
-        for stats in self.token_stats(texts):
-            s, r = stats["surprisal"], stats["rank"]
-            rows.append(
-                {
-                    "mean_surprisal": float(s.mean()),
-                    "surprisal_std": float(s.std()),
-                    "top1_frac": float((r == 1).mean()),
-                    "top10_frac": float((r <= 10).mean()),
-                }
-            )
-        return rows
+        return [perplexity_features(stats) for stats in self.token_stats(texts)]
+
+
+def perplexity_features(stats: dict[str, np.ndarray]) -> dict[str, float]:
+    """The four document-level GPT-2 features from one text's per-token stats."""
+    s, r = stats["surprisal"], stats["rank"]
+    return {
+        "mean_surprisal": float(s.mean()),
+        "surprisal_std": float(s.std()),
+        "top1_frac": float((r == 1).mean()),
+        "top10_frac": float((r <= 10).mean()),
+    }

@@ -73,6 +73,26 @@ _EMDASH_RE = re.compile(r"—|\s--\s")
 _ELLIPSIS_RE = re.compile(r"\.\.\.|…")
 
 
+def count_hedges(text: str) -> int:
+    return len(_HEDGE_RE.findall(text))
+
+
+def count_stock_phrases(text: str) -> int:
+    return len(_STOCK_RE.findall(text))
+
+
+def starts_with_transition(sentence: str) -> bool:
+    return bool(_TRANSITION_START_RE.match(sentence.strip()))
+
+
+def count_contractions(doc_or_span) -> int:
+    return sum(
+        1
+        for t in doc_or_span
+        if t.text.lower() in _CONTRACTION_PIECES or (t.text.lower() == "'s" and t.tag_ != "POS")
+    )
+
+
 def mattr(tokens: list[str], window: int = 25) -> float:
     """Moving-average type-token ratio: lexical diversity that doesn't shrink as texts get longer.
 

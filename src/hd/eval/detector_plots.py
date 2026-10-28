@@ -87,3 +87,35 @@ def matplotlib_cmap():
     from matplotlib.colors import LinearSegmentedColormap
 
     return LinearSegmentedColormap.from_list("blue_seq", BLUE_RAMP)
+
+
+def plot_score_distributions(df: pd.DataFrame, score_col: str, path: Path, title: str) -> None:
+    """Histogram of a detector's AI-probability for human vs AI texts, one panel per genre."""
+    from hd.eval.style import AI_C, HUMAN_C
+
+    genres = _genres(df)
+    fig, axes = plt.subplots(1, len(genres), figsize=(4.6 * len(genres), 3.9), facecolor=SURFACE, squeeze=False)
+    bins = np.linspace(0, 1, 26)
+    for ax, genre in zip(axes[0], genres):
+        g = df[df["genre"] == genre]
+        ax.set_facecolor(SURFACE)
+        for side in ("top", "right", "left"):
+            ax.spines[side].set_visible(False)
+        ax.spines["bottom"].set_color(AXIS)
+        ax.set_yticks([])
+        for label, color in ((0, HUMAN_C), (1, AI_C)):
+            vals = g.loc[g["label"] == label, score_col]
+            counts, edges = np.histogram(vals, bins=bins)
+            ax.stairs(counts, edges, fill=True, color=color, alpha=0.10, linewidth=0)
+            ax.stairs(counts, edges, color=color, linewidth=2)
+        ax.axvline(0.5, color=AXIS, linewidth=1)
+        ax.set_xlim(0, 1)
+        ax.set_title(genre, loc="left", color=INK, fontsize=11, fontweight="bold", pad=8)
+        ax.set_xlabel("P(AI) from the detector", color=INK2, fontsize=9)
+        ax.tick_params(colors=MUTED, labelsize=9, length=0)
+    handles = [plt.Line2D([], [], color=HUMAN_C, linewidth=2, label="human"), plt.Line2D([], [], color=AI_C, linewidth=2, label="AI")]
+    fig.legend(handles=handles, loc="upper right", ncol=2, frameon=False, labelcolor=INK2, fontsize=10, bbox_to_anchor=(0.99, 0.995))
+    fig.text(0.01, 0.985, title, color=INK, fontsize=12, fontweight="bold", ha="left", va="top")
+    fig.subplots_adjust(left=0.04, right=0.985, top=0.80, bottom=0.17, wspace=0.12)
+    fig.savefig(path, dpi=160, facecolor=SURFACE)
+    plt.close(fig)

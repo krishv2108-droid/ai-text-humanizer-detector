@@ -66,6 +66,17 @@ A running glossary. Terms are added as we meet them.
   large opposite weights, so individual coefficients stop meaning anything.
 - **Permutation importance:** shuffle one feature and see how much the score drops. Misleading when
   other features carry the same information (they cover for it).
+- **Weak supervision:** training with labels that are only approximately right. Our sentence model labels
+  every sentence of an AI text "AI", though some are not. Fine for ranking, wrong for certifying.
+- **Calibration:** whether a detector's probabilities mean what they say. A detector can rank perfectly
+  (high AUC) yet call 26% of human texts "AI" at the 0.5 cutoff, because its scale is shifted.
+- **False-positive rate (FPR) / matched-FPR comparison:** the share of human texts wrongly flagged. To
+  compare two detectors fairly, set each cutoff so they flag the same share of humans, then compare how
+  much AI text each catches.
+- **Neutralization (ablation) attribution:** replace a feature's value by a typical one and see how much
+  the score moves. Model-agnostic, and group-level versions are more reliable when features are correlated.
+- **Independent / out-of-distribution evaluation:** scoring with a detector that never saw our data, to
+  avoid mistaking "fooled my own detector" for "reads as human".
 - **Virtual environment (venv):** an isolated folder of Python packages for one project, so
   projects don't clash. `uv sync` builds ours in `.venv/`.
 
@@ -144,3 +155,23 @@ humanizer will pull, and the one an independent detector may not care about.
 Notice how the coefficients move once the GPT-2 features are available. Then edit `VARIANTS` in
 `hd/detector/baseline.py` to add a variant with only the `rhythm` group and see how little AUC one
 feature family buys on its own.
+
+
+---
+
+## Milestone 4: explanations and the independent detector
+
+**3 takeaways**
+1. **A great ranker can be a terrible classifier at its default threshold.** desklib's AUC is 0.996, yet at
+   0.5 it flags 26% of human text. If I had reported "detection rate at 0.5" for rewritten text, the result
+   would have mostly measured that miscalibration. Matched-false-positive-rate comparisons fix it.
+2. **Verify that a borrowed model really loaded.** The custom model class could silently leave the
+   classifier head randomly initialised and still return numbers. A test now checks the loading report,
+   and that scores do not depend on batch padding.
+3. **Explanations need a sign convention and honest limits.** My first output printed `perplexity -0.992`
+   under a header that implied "toward AI"; the group in fact pushed toward *human*. And because
+   GPT-2's four features cover for each other, group-level attributions beat per-feature ones.
+
+**1 experiment to try:** run `uv run hd detect --external` on (a) a paragraph you wrote, (b) the same
+paragraph pasted into a chatbot with "rewrite this more formally", and (c) a mix of both. Compare our
+detector with desklib, and look at which feature group drives each score. Where do they disagree, and why?

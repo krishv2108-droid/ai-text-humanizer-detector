@@ -1,0 +1,14 @@
+feature,coef
+s_mean_surprisal,-1.762
+s_len_words,0.699
+s_len_rel,-0.55
+s_top10_frac,0.526
+s_first_person,-0.261
+s_commas,-0.225
+s_hedges,0.189
+s_has_contraction,-0.18
+s_starts_transition,0.134
+s_excl_q,0.118
+s_max_surprisal,0.045
+s_stock,0.035
+s_top1_frac,-0.025

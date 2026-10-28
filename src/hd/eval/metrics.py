@@ -75,3 +75,14 @@ def grouped_bootstrap_ci(
         stats.append(metric(y[idx], p[idx]))
     lo, hi = np.percentile(stats, [2.5, 97.5])
     return float(lo), float(hi)
+
+
+def threshold_at_fpr(human_scores: np.ndarray, fpr: float = 0.05) -> float:
+    """Cutoff such that at most `fpr` of human texts score strictly above it.
+
+    Detectors are calibrated differently, so a fixed 0.5 cutoff can mean wildly different false-positive
+    rates (the independent detector flags ~26% of our human validation text at 0.5). Comparing
+    detectors at a matched false-positive rate, chosen on validation humans, is the fair comparison.
+    Flag a text when `score > threshold`.
+    """
+    return float(np.quantile(np.asarray(human_scores, dtype=float), 1.0 - fpr))

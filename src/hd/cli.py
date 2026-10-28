@@ -32,6 +32,15 @@ def build_parser() -> argparse.ArgumentParser:
     det_sub = det.add_subparsers(dest="detector_command", required=True)
     base = det_sub.add_parser("train-baseline", help="fit the feature-based detectors; report on the validation split")
     base.add_argument("--variants", nargs="*", default=None, help="subset of variants (default: all)")
+    det_sub.add_parser("train-sentence", help="fit the per-sentence model (needs GPT-2; ~3 min the first time)")
+    det_sub.add_parser("eval-external", help="score validation texts with the independent detector")
+
+    detect = sub.add_parser("detect", help="P(AI), per-sentence breakdown and drivers for a text")
+    detect.add_argument("text", nargs="?", help="the text (or use --file / stdin)")
+    detect.add_argument("--file", help="read the text from a file")
+    detect.add_argument("--external", action="store_true", help="also score with the independent detector")
+    detect.add_argument("--top", type=int, default=3, help="how many most-AI-like sentences to show")
+    detect.add_argument("--json", action="store_true", help="machine-readable output")
     return parser
 
 
@@ -40,8 +49,8 @@ def main(argv: list[str] | None = None) -> int:
     cfg = load_config(args.config) if args.config else load_config()
     set_seed(cfg["seed"])
 
-    if args.command in ("data", "features", "detector"):
-        runners = {"data": _run_data, "features": _run_features, "detector": _run_detector}
+    if args.command in ("data", "features", "detector", "detect"):
+        runners = {"data": _run_data, "features": _run_features, "detector": _run_detector, "detect": _run_detect}
         try:
             return runners[args.command](args, cfg)
         except RuntimeError as err:  # e.g. missing API key: show the message, not a traceback
@@ -111,6 +120,60 @@ def _run_detector(args: argparse.Namespace, cfg: dict) -> int:
         from hd.detector.baseline import run_baseline
 
         run_baseline(cfg, args.variants)
+    elif args.detector_command == "train-sentence":
+        from hd.detector.sentence import run_sentence
+
+        run_sentence(cfg)
+    elif args.detector_command == "eval-external":
+        from hd.eval.external_eval import run_external_eval
+
+        run_external_eval(cfg)
+    return 0
+
+
+def _run_detect(args: argparse.Namespace, cfg: dict) -> int:
+    import json
+
+    if args.file:
+        text = open(args.file).read()
+    elif args.text:
+        text = args.text
+    else:
+        text = sys.stdin.read()
+
+    from hd.detector.explain import Detector
+
+    detector = Detector.load(cfg)
+    try:
+        a = detector.analyze(text)
+    except ValueError as err:
+        print(f"error: {err}", file=sys.stderr)
+        return 1
+    external = None
+    if args.external:
+        from hd.detector.external import DesklibDetector
+
+        external = float(DesklibDetector().predict_proba([a.text])[0])
+
+    if args.json:
+        print(json.dumps({
+            "prob_ai": a.prob_ai, "external_prob_ai": external, "n_words": a.n_words,
+            "group_effects": a.group_effects, "feature_effects": a.feature_effects[:10],
+            "sentences": [vars(s) for s in a.sentences],
+        }, indent=2))  # fmt: skip
+        return 0
+
+    print(f"P(AI) = {a.prob_ai:.3f}   ({a.n_words} words, detector: {detector.variant})")
+    if external is not None:
+        print(f"independent detector (desklib): P(AI) = {external:.3f}")
+    print("\nWhat drove the score. Effect = change in P(AI) if that feature group looked typical:")
+    print("  (+ means the group pushes this text toward AI, - toward human)")
+    for group, effect in a.group_effects.items():
+        print(f"  {group:12s} {effect:+.3f}")
+    print("\nMost AI-like sentences:")
+    for s in a.top_sentences(args.top):
+        why = f"   [{'; '.join(s.reasons)}]" if s.reasons else ""
+        print(f"  {s.prob_ai:.2f}  {s.text[:140]}{'...' if len(s.text) > 140 else ''}{why}")
     return 0
 
 

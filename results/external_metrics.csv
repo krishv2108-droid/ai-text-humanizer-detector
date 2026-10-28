@@ -1,0 +1,7 @@
+genre,detector,n,roc_auc,ai_detected_at_0.5,human_flagged_at_0.5,calibrated_threshold,ai_detected_at_fpr5,human_flagged_at_fpr5,mean_score_ai,mean_score_human
+all,ours (gbm_full),730,0.9981,0.9863,0.0219,0.0415,0.989,0.0521,0.9806,0.0225
+all,desklib,730,0.9965,0.9973,0.2575,0.9458,0.9836,0.0521,0.9941,0.3228
+casual,ours (gbm_full),276,0.9987,0.9855,0.0145,0.0197,0.9928,0.0507,0.9866,0.0169
+casual,desklib,276,0.9986,1.0,0.1594,0.9312,0.9928,0.0507,0.9978,0.2459
+essay,ours (gbm_full),454,0.9975,0.9868,0.0264,0.0702,0.9868,0.0529,0.9769,0.0259
+essay,desklib,454,0.9947,0.9956,0.3172,0.9469,0.978,0.0529,0.9918,0.3696

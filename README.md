@@ -42,7 +42,7 @@ The Anthropic API key is read from the `ANTHROPIC_API_KEY` environment variable 
 ## Project status
 
 Built in small milestones, one commit each (see `git log`); per-milestone notes are in
-`LEARNING.md`. Current: **M3 - baseline detector** (done). AI stories still wait for an API key.
+`LEARNING.md`. Current: **M4 - explanations + independent detector** (done). AI stories still wait for an API key.
 
 ## What gives AI text away? (preliminary, M2)
 
@@ -92,6 +92,43 @@ How to read this honestly:
   rewrites designed to evade it, is exactly what M5-M7 measure.
 - Boosted trees fit the training set perfectly (train accuracy 1.00) yet validate at 0.982, so the
   validation number, not the training number, is the one to quote.
+
+## Using the detector, and the independent check (M4)
+
+```bash
+uv run hd detector train-sentence                    # once: fits the per-sentence model (~3 min)
+uv run hd detect "paste a text here" --external      # or --file story.txt, or pipe via stdin
+```
+
+You get P(AI), which feature groups drove the score, and the most AI-like sentences with plain-language
+reasons (predictable wording, stock transition opener, hedging, uniform length). Drivers use
+*neutralization*: swap a feature group's values for typical ones and see how much P(AI) moves
+(`+` = pushes toward AI). Sentence scores come from a small model on GPT-2 surprisal-in-context plus local
+cues. Its labels are inherited from the document, so it ranks sentences within a text; it does not certify
+any single sentence (validation sentence AUC 0.90, [results/sentence_metrics.csv](results/sentence_metrics.csv)).
+
+**Independent detector:** [`desklib/ai-text-detector-v1.01`](https://huggingface.co/desklib/ai-text-detector-v1.01)
+(DeBERTa-v3-large, MIT, trained on the RAID benchmark, not on our data). It is used only to *evaluate*;
+nothing in this project is trained or tuned against it.
+
+![Independent detector scores by true label](results/figures/external_scores.png)
+
+Validation split, raw human vs raw AI text ([results/external_metrics.csv](results/external_metrics.csv)):
+
+| Detector | ROC-AUC | AI caught @0.5 | Human flagged @0.5 | AI caught @ 5% human flagged |
+|---|---|---|---|---|
+| Ours (boosted trees) | 0.998 | 98.6% | 2.2% | 98.9% |
+| desklib (independent) | 0.996 | 99.7% | **25.8%** | 98.4% |
+
+- **The independent detector ranks texts about as well as ours, but its default 0.5 cutoff is badly
+  miscalibrated for this text:** it flags a quarter of human answers (a third of the essays) as AI.
+- **So every later comparison uses a matched false-positive rate.** Each detector's cutoff is chosen on
+  validation *human* texts to flag 5% of them ([results/detector_thresholds.json](results/detector_thresholds.json)),
+  then frozen. Otherwise "humanized text is flagged less" could just mean "the detector over-flags everything".
+- **Both detectors find raw ChatGPT-2022 text easy.** The meaningful test is rewritten text (M6-M7).
+- **Anecdote, not a result:** on one hand-written paragraph mixing casual and stock-AI sentences, our
+  detector said 0.002 and desklib 1.000. One example proves nothing, but it fits the concern that ours leans
+  on GPT-2 predictability, which a few quirky specifics can move.
 
 ## Data
 
