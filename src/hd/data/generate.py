@@ -28,6 +28,11 @@ def story_request(prompt: str, target_words: int) -> str:
     return f"Writing prompt: {prompt}\n\nWrite a short story in response, about {target_words} words."
 
 
+def requested_words(target_words: int, length_scale: float) -> int:
+    """Models overshoot a word target (measured about 1.4x for gpt-oss-120b), so we ask for a fraction of it."""
+    return max(100, int(round(target_words * length_scale / 10.0) * 10))
+
+
 def generate_stories(
     client: LLMClient,
     prompts_path: Path,
@@ -37,6 +42,7 @@ def generate_stories(
     max_tokens: int,
     effort: str | None,
     limit: int | None = None,
+    length_scale: float = 1.0,
 ) -> dict[str, Any]:
     done: set[str] = set()
     if out_path.exists():
@@ -54,7 +60,7 @@ def generate_stories(
             try:
                 resp = client.complete(
                     system=SYSTEM,
-                    prompt=story_request(item["prompt"], item["target_words"]),
+                    prompt=story_request(item["prompt"], requested_words(item["target_words"], length_scale)),
                     model=model,
                     # budget from the target length (about 1.3 tokens per word, with headroom), capped:
                     # free tiers meter tokens, so an oversized budget wastes the daily allowance

@@ -69,19 +69,21 @@ class Humanizer:
     def __init__(self, client: LLMClient, model: str, profile: HumanProfile | None = None, effort: str | None = None):
         self.client, self.model, self.profile, self.effort = client, model, profile, effort
 
-    def build_request(self, draft: str, genre: str, strategy: str = "full", analysis=None, original: str | None = None) -> tuple[str, str]:
+    def build_request(self, draft: str, genre: str, strategy: str = "full", analysis=None, original: str | None = None,
+                      retry_note: str | None = None) -> tuple[str, str]:  # fmt: skip
         """The exact (system, user) prompt that would be sent. Costs nothing: used by --dry-run and tests."""
         feedback_text = None
         if strategy in ("feedback", "full"):
             if analysis is None or self.profile is None:
                 raise ValueError(f"strategy {strategy!r} needs a detector analysis and a human profile")
             feedback_text = render_feedback(diagnose(analysis, self.profile, genre), analysis)
-        return build_prompt(draft, genre, strategy, feedback_text, original)
+        return build_prompt(draft, genre, strategy, feedback_text, original, retry_note)
 
-    def humanize(self, draft: str, genre: str, strategy: str = "full", analysis=None, original: str | None = None) -> RewriteResult:
+    def humanize(self, draft: str, genre: str, strategy: str = "full", analysis=None, original: str | None = None,
+                 retry_note: str | None = None) -> RewriteResult:  # fmt: skip
         if strategy not in STRATEGIES:
             raise ValueError(f"unknown strategy {strategy!r}")
-        system, user = self.build_request(draft, genre, strategy, analysis, original)
+        system, user = self.build_request(draft, genre, strategy, analysis, original, retry_note)
         words = len(draft.split())
         resp = self.client.complete(system=system, prompt=user, model=self.model,
                                     max_tokens=min(6000, int(words * 2.5) + 400), effort=self.effort)  # fmt: skip

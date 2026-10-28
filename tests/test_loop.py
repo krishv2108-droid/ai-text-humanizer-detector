@@ -1,0 +1,228 @@
+import json
+
+import pandas as pd
+import pytest
+
+from hd.data.splits import TestSetLockedError
+from hd.detector.explain import Analysis
+from hd.humanizer.guardrails import GuardrailReport
+from hd.humanizer.prompts import build_prompt
+from hd.humanizer.rewrite import RewriteResult
+from hd.llm import DailyLimitReached
+from hd.loop import Step, choose_final, cutoff_for, iteration_curve, load_results, run_batch, run_loop, select_items, summarize
+
+CUT = 0.30  # our detector's frozen cutoff in these tests; "flagged" means strictly above
+
+
+class FakeDetector:
+    def __init__(self, probs: dict[str, float]):
+        self.probs = probs
+
+    def analyze(self, text: str) -> Analysis:
+        return Analysis(text, self.probs[text], len(text.split()), [], {}, [], {})
+
+
+class FakeHumanizer:
+    """Returns scripted rewrites in order (an Exception in the script is raised) and records every call."""
+
+    def __init__(self, outputs):
+        self.outputs, self.calls = list(outputs), []
+
+    def humanize(self, draft, genre, strategy, analysis=None, original=None, retry_note=None):
+        self.calls.append({"draft": draft, "original": original, "retry_note": retry_note, "analysis": analysis})
+        out = self.outputs.pop(0)
+        if isinstance(out, Exception):
+            raise out
+        return RewriteResult(out, strategy, "", "", 10, 20)
+
+
+class FakeChecker:
+    def __init__(self, bad=()):
+        self.bad, self.compared_to = set(bad), []
+
+    def check(self, original, rewrite):
+        self.compared_to.append(original)
+        flags = ["meaning drifted from the original"] if rewrite in self.bad else []
+        return GuardrailReport(0.9, 0.0, 0.0, 1.0, 5.0, 5.0, 70.0, 70.0, 0.0, None, flags)
+
+
+class FakeExternal:
+    def __init__(self, probs: dict[str, float]):
+        self.probs = probs
+
+    def predict_proba(self, texts):
+        return [self.probs[t] for t in texts]
+
+
+def go(probs, outputs, bad=(), external=None, max_iterations=4):
+    humanizer, checker = FakeHumanizer(outputs), FakeChecker(bad)
+    result = run_loop(FakeDetector(probs), humanizer, checker, "orig", "story", strategy="full", our_cutoff=CUT,
+                      ext_cutoff=0.9 if external else None, external=external, max_iterations=max_iterations, item_id="x")  # fmt: skip
+    return result, humanizer, checker
+
+
+def test_stops_as_soon_as_our_detector_passes():
+    result, humanizer, _ = go({"orig": 0.95, "r1": 0.60, "r2": 0.20, "r3": 0.10}, ["r1", "r2", "r3"])
+    assert [s.iteration for s in result.steps] == [0, 1, 2]
+    assert result.stop_reason == "success" and result.final == 2
+    assert len(humanizer.calls) == 2  # never asked for the third rewrite
+
+
+def test_every_draft_gets_one_rewrite_even_if_already_passing():
+    result, humanizer, _ = go({"orig": 0.05, "r1": 0.04}, ["r1"])
+    assert len(humanizer.calls) == 1 and result.final == 1 and result.stop_reason == "success"
+
+
+def test_flagged_means_strictly_above_the_cutoff():
+    result, _, _ = go({"orig": 0.9, "r1": CUT}, ["r1"])  # exactly at the cutoff is not flagged
+    assert result.stop_reason == "success"
+
+
+def test_runs_out_of_iterations_and_keeps_the_best_accepted_rewrite():
+    result, _, _ = go({"orig": 0.9, "r1": 0.7, "r2": 0.5, "r3": 0.6}, ["r1", "r2", "r3"], max_iterations=3)
+    assert result.stop_reason == "max_iterations" and len(result.steps) == 4
+    assert result.final == 2  # lowest score, not the last one
+
+
+def test_guardrail_failure_is_discarded_and_the_retry_is_told_why():
+    result, humanizer, checker = go({"orig": 0.9, "r1": 0.05, "r2": 0.80, "r3": 0.20}, ["r1", "r2", "r3"], bad={"r1", "r2"})
+    # r1 fooled the detector but broke the guardrails, so it can't be kept or end the loop
+    assert [s.guardrails_ok for s in result.steps[1:]] == [False, False, True]
+    assert result.final == 3 and result.stop_reason == "success"
+    assert humanizer.calls[1]["retry_note"].startswith("Your previous attempt was rejected")
+    assert "meaning drifted" in humanizer.calls[1]["retry_note"]
+    assert all(c["draft"] == "orig" for c in humanizer.calls[:2])  # restarted from the last accepted draft
+    assert humanizer.calls[2]["draft"] == "orig" and humanizer.calls[2]["original"] == "orig"
+    assert set(checker.compared_to) == {"orig"}  # always judged against the original, never the previous rewrite
+
+
+def test_next_attempt_builds_on_the_latest_accepted_rewrite():
+    _, humanizer, _ = go({"orig": 0.9, "r1": 0.6, "r2": 0.1}, ["r1", "r2"])
+    assert humanizer.calls[1]["draft"] == "r1" and humanizer.calls[1]["original"] == "orig"
+    assert humanizer.calls[1]["analysis"].text == "r1"  # feedback comes from the draft being rewritten
+    assert humanizer.calls[1]["retry_note"] is None
+
+
+def test_no_acceptable_rewrite_means_no_final():
+    result, _, _ = go({"orig": 0.9, "r1": 0.05, "r2": 0.04}, ["r1", "r2"], bad={"r1", "r2"}, max_iterations=2)
+    assert result.final is None and result.stop_reason == "max_iterations"
+
+
+def test_repeated_output_stops_the_loop_instead_of_wasting_calls():
+    result, humanizer, _ = go({"orig": 0.9, "r1": 0.6}, ["r1", "r1", "r1"])
+    assert result.stop_reason == "stalled" and len(result.steps) == 2 and len(humanizer.calls) == 2
+
+
+def test_model_errors_end_that_text_but_rate_limits_propagate():
+    result, _, _ = go({"orig": 0.9, "r1": 0.6}, ["r1", RuntimeError("the model returned an empty rewrite")])
+    assert result.stop_reason.startswith("error:") and result.final == 1
+    with pytest.raises(DailyLimitReached):
+        go({"orig": 0.9}, [DailyLimitReached("daily tokens used up")])
+
+
+def test_independent_detector_is_recorded_but_never_decides_anything():
+    # external still flags every step, yet the loop stops and keeps the rewrite our detector prefers
+    ext = FakeExternal({"orig": 0.99, "r1": 0.98, "r2": 0.97, "r3": 0.99})
+    result, _, _ = go({"orig": 0.9, "r1": 0.25, "r2": 0.20, "r3": 0.1}, ["r1", "r2", "r3"], external=ext)
+    assert result.stop_reason == "success" and result.final == 1 and len(result.steps) == 2
+    assert [s.external for s in result.steps] == [0.99, 0.98]
+    no_ext, _, _ = go({"orig": 0.9, "r1": 0.25}, ["r1"])
+    assert no_ext.steps[0].external is None
+
+
+def test_choose_final_ties_go_to_the_earlier_iteration():
+    steps = [Step(0, "o", 0.9, None), Step(1, "a", 0.2, None, True), Step(2, "b", 0.2, None, True), Step(3, "c", 0.1, None, False)]
+    assert choose_final(steps) == 1
+
+
+def test_cutoff_for_requires_the_exact_genre():
+    table = {"ours": {"casual": 0.02, "all": 0.04}}
+    assert cutoff_for(table, "ours", "casual") == 0.02
+    with pytest.raises(RuntimeError, match="story"):
+        cutoff_for(table, "ours", "story")  # no silent fallback to "all"
+    with pytest.raises(RuntimeError, match="external"):
+        cutoff_for(table, "external", "casual")
+
+
+def test_retry_note_reaches_the_prompt_only_when_given():
+    _, plain = build_prompt("the draft", "story", "craft")
+    _, retried = build_prompt("the draft", "story", "craft", retry_note="It dropped a scene.")
+    assert "NOTE" not in plain and "NOTE: It dropped a scene." in retried
+    assert retried.rstrip().endswith('"""')  # the draft is still last
+
+
+# ---- batches, sampling, summaries -------------------------------------------------------------
+
+def make_corpus():
+    rows = []
+    for i in range(40):
+        for label in (0, 1):
+            rows.append({"id": f"{'ai' if label else 'h'}{i}", "genre": "story", "label": label, "has_pair": i % 10 != 0,
+                         "split": "val" if i < 30 else "test", "text": f"t{i}", "n_words": 5})  # fmt: skip
+    rows.append({"id": "casual-ai", "genre": "casual", "label": 1, "has_pair": True, "split": "val", "text": "c", "n_words": 5})
+    return pd.DataFrame(rows)
+
+
+def test_select_items_is_deterministic_extendable_and_ai_only():
+    corpus = make_corpus()
+    five = select_items(corpus, "val", "story", 5, seed=1)
+    ten = select_items(corpus, "val", "story", 10, seed=1)
+    assert list(ten["id"][:5]) == list(five["id"])  # a bigger n extends the same sample
+    assert list(select_items(corpus, "val", "story", 5, seed=2)["id"]) != list(five["id"])
+    assert (ten["label"] == 1).all() and (ten["genre"] == "story").all() and ten["has_pair"].all()
+    assert not ten["id"].isin(["ai0", "ai10", "ai20"]).any()  # no partner, so excluded
+
+
+def test_select_items_cannot_touch_the_locked_test_split():
+    with pytest.raises(TestSetLockedError):
+        select_items(make_corpus(), "test", "story", 5, seed=1)
+
+
+def result_for(item_id, probs, outputs, max_iterations=None):
+    item_probs = {"orig": probs[0]} | {f"r{i}": p for i, p in enumerate(probs[1:], 1)}
+    humanizer, checker = FakeHumanizer(outputs), FakeChecker()
+    return run_loop(FakeDetector(item_probs), humanizer, checker, "orig", "story", our_cutoff=CUT, item_id=item_id,
+                    max_iterations=max_iterations or len(probs) - 1)  # fmt: skip
+
+
+def test_run_batch_writes_resumes_and_stops_cleanly_at_the_daily_limit(tmp_path):
+    out = tmp_path / "log.jsonl"
+    items = [{"id": "a"}, {"id": "b"}, {"id": "c"}]
+
+    def first_run(item):
+        if item["id"] == "c":
+            raise DailyLimitReached("tokens per day exhausted", 3600)
+        return result_for(item["id"], [0.9, 0.1], ["r1"])
+
+    stats = run_batch(items, out, first_run)
+    assert stats["written"] == 2 and stats["stopped_by_limit"]
+    assert "60 min" in stats["message"]
+    again = run_batch(items, out, lambda item: result_for(item["id"], [0.9, 0.1], ["r1"]))
+    assert again["skipped_done"] == 2 and again["written"] == 1
+    assert [r["id"] for r in load_results(out)] == ["a", "b", "c"]
+    assert all(json.loads(line)["steps"][0]["text"] == "orig" for line in open(out))
+
+
+def test_summary_counts_an_unaccepted_text_as_unchanged():
+    ok = result_for("a", [0.9, 0.1], ["r1"])  # flagged -> fixed
+    kept_flagged = result_for("b", [0.9, 0.8, 0.7, 0.6, 0.5], ["r1", "r2", "r3", "r4"])  # still flagged after 4
+    ok.ext_cutoff = kept_flagged.ext_cutoff = 0.5
+    for r, ext in ((ok, [0.9, 0.2]), (kept_flagged, [0.9, 0.9, 0.9, 0.9, 0.9])):
+        for s, e in zip(r.steps, ext):
+            s.external = e
+    unaccepted = result_for("c", [0.9, 0.1], ["r1"])
+    unaccepted.steps[1].guardrails_ok, unaccepted.final = False, None
+    unaccepted.ext_cutoff, unaccepted.steps[0].external, unaccepted.steps[1].external = 0.5, 0.9, 0.1
+    row = summarize([r.to_dict() for r in (ok, kept_flagged, unaccepted)]).iloc[0]
+    assert row["n"] == 3 and row["ours_flagged_before"] == 1.0
+    assert row["ours_flagged_after"] == pytest.approx(2 / 3)  # b still flagged; c unchanged => still flagged
+    assert row["external_flagged_after"] == pytest.approx(2 / 3)  # c's low external score is not credited
+    assert row["rewrite_accepted"] == pytest.approx(2 / 3)
+
+
+def test_iteration_curve_carries_finished_texts_forward():
+    a = result_for("a", [0.9, 0.1], ["r1"]).to_dict()  # stops after 1 rewrite
+    b = result_for("b", [0.9, 0.8, 0.7], ["r1", "r2"]).to_dict()
+    curve = iteration_curve([a, b])
+    assert list(curve["rewrites"]) == [0, 1, 2]
+    assert curve["mean_ours"].round(3).tolist() == [0.9, 0.45, 0.4]

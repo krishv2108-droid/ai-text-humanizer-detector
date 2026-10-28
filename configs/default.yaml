@@ -21,6 +21,7 @@ data:
   # Prompts are ordered by a stable hash, so raising story_pairs later only appends new ones.
   story_pairs: 300
   story_words: [200, 600]      # keep human stories in this range (also bounds generation cost)
+  story_length_scale: 0.8      # ask the LLM for this fraction of the human length; it overshoots word targets
   min_words: 25                # minimum words for HC3 answers
   # HC3 pairs (1 human + 1 ChatGPT answer per question) kept per source file.
   pairs_per_source:
@@ -35,10 +36,10 @@ llm:
   # are resumable, and `hd llm check` reports your account's real limits. Switch provider to "anthropic"
   # (and models to claude-* ids) if you ever use an Anthropic key.
   provider: groq
-  generation_model: llama-3.3-70b-versatile   # writes the AI side of the story pairs
-  humanizer_model: llama-3.3-70b-versatile    # rewrites AI text
-  generation_effort: null     # only used by reasoning models such as openai/gpt-oss-120b (low|medium|high)
-  humanizer_effort: null
+  generation_model: openai/gpt-oss-120b   # writes the AI side of the story pairs
+  humanizer_model: openai/gpt-oss-120b    # rewrites AI text
+  generation_effort: low     # only used by reasoning models such as openai/gpt-oss-120b (low|medium|high)
+  humanizer_effort: low
   generation_max_tokens: 2000 # ceiling; each story's budget is derived from its target length
   max_retries: 6              # SDK retries 429/5xx using the provider's retry-after
   min_interval_s: 2.0         # spacing between requests (guards the per-minute request limit)
@@ -47,7 +48,10 @@ llm:
 
 loop:
   max_iterations: 4
-  flag_threshold: 0.5   # AI probability at/above this counts as "flagged"
+  # "Flagged" means above the frozen 5%-false-positive cutoff for that detector and genre
+  # (results/detector_thresholds.json, from `hd detector eval-external`), never a fixed 0.5.
+  # Every draft gets at least one rewrite, even one our detector already passes (the independent detector
+  # may still flag it, and the humanizer is what is being evaluated).
 
 guardrails:
   # Provisional. `hd humanizer calibrate-guardrails` simulates failures (see results/guardrail_calibration.csv);

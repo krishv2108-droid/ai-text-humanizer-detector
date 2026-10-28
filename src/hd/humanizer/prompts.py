@@ -63,11 +63,13 @@ def build_prompt(
     strategy: str,
     feedback_text: str | None = None,
     original: str | None = None,
+    retry_note: str | None = None,
 ) -> tuple[str, str]:
     """Return (system, user) for one rewriting call.
 
     `draft` is what to rewrite. If it is itself an earlier rewrite, pass the very first AI text as
     `original` so the meaning stays anchored to it instead of drifting further each pass.
+    `retry_note` tells the model why its previous attempt was rejected (the loop's guardrail failures).
     """
     if strategy not in STRATEGIES:
         raise ValueError(f"unknown strategy {strategy!r}; expected one of {STRATEGIES}")
@@ -81,5 +83,7 @@ def build_prompt(
         parts.append(feedback_text)  # type: ignore[arg-type]
     if original is not None and original.strip() != draft.strip():
         parts.append(f'For reference, the meaning to preserve is that of the ORIGINAL text:\n"""\n{original.strip()}\n"""')
+    if retry_note:
+        parts.append(f"NOTE: {retry_note.strip()}")
     parts.append(f'DRAFT TO REWRITE:\n"""\n{draft.strip()}\n"""')
     return SYSTEM, "\n\n".join(parts)

@@ -45,6 +45,8 @@ def normalize_text(text: str) -> str:
     t = re.sub(r"[“”„‟«»]", '"', t)  # curly/low/guillemet -> "
     t = re.sub(r"[‘’‚‛]", "'", t)  # curly single -> '
     t = t.replace("…", "...")
+    t = re.sub(r"[\u2010\u2011\u2012]", "-", t)  # non-breaking/odd hyphens (LLMs emit them, people don't type them)
+    t = re.sub(r"[\u00a0\u202f]", " ", t)  # non-breaking spaces
     t = _NEWLINE_PAD.sub("\n", t)
     t = _MANY_NEWLINES.sub("\n\n", t)
     t = _fix_double_quotes(t)

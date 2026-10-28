@@ -134,3 +134,15 @@ def test_built_corpus_has_no_leaks():
     assert not df["text"].str.contains("“|”|’|``", regex=True).any()
     assert set(df["split"]) <= {"train", "val", "test"}
     assert df["id"].is_unique
+
+
+def test_normalize_replaces_llm_only_hyphens_and_spaces():
+    assert normalize_text("a half\u2011eaten 14th\u2011century\u00a0book") == "a half-eaten 14th-century book"
+
+
+def test_requested_words_scales_down_and_has_a_floor():
+    from hd.data.generate import requested_words
+
+    assert requested_words(500, 0.8) == 400
+    assert requested_words(500, 1.0) == 500
+    assert requested_words(110, 0.5) == 100

@@ -50,6 +50,19 @@ def build_parser() -> argparse.ArgumentParser:
     humanize.add_argument("--dry-run", action="store_true", help="show the prompt that would be sent; call no API")
     humanize.add_argument("--external", action="store_true", help="also score before/after with the independent detector")
 
+    loop = sub.add_parser("loop", help="adversarial loop: rewrite, score, feedback, rewrite")
+    loop_sub = loop.add_subparsers(dest="loop_command", required=True)
+    run = loop_sub.add_parser("run", help="run the loop over a sample of AI texts (resumable; logs every iteration)")
+    run.add_argument("--genre", choices=["story", "essay", "casual"], default="story")
+    run.add_argument("--split", choices=["train", "val"], default="val", help="the test split is only used by the final evaluation")
+    run.add_argument("--n", type=int, default=10, help="how many AI texts (a larger n extends the same sample)")
+    run.add_argument("--strategy", choices=["naive", "craft", "feedback", "full"], default="full")
+    run.add_argument("--max-iterations", type=int, help="default: loop.max_iterations from the config")
+    run.add_argument("--no-external", action="store_true", help="skip the independent detector (faster; fewer claims)")
+    run.add_argument("--out", help="JSONL log (default: data/processed/loop_<split>_<genre>_<strategy>.jsonl)")
+    summ = loop_sub.add_parser("summary", help="detection rates before/after from a loop log")
+    summ.add_argument("file", help="a JSONL log written by `hd loop run`")
+
     detect = sub.add_parser("detect", help="P(AI), per-sentence breakdown and drivers for a text")
     detect.add_argument("text", nargs="?", help="the text (or use --file / stdin)")
     detect.add_argument("--file", help="read the text from a file")
@@ -64,9 +77,9 @@ def main(argv: list[str] | None = None) -> int:
     cfg = load_config(args.config) if args.config else load_config()
     set_seed(cfg["seed"])
 
-    if args.command in ("data", "features", "detector", "detect", "humanizer", "humanize", "llm"):
+    if args.command in ("data", "features", "detector", "detect", "humanizer", "humanize", "llm", "loop"):
         runners = {"data": _run_data, "features": _run_features, "detector": _run_detector, "detect": _run_detect,
-                   "humanizer": _run_humanizer, "humanize": _run_humanize, "llm": _run_llm}  # fmt: skip
+                   "humanizer": _run_humanizer, "humanize": _run_humanize, "llm": _run_llm, "loop": _run_loop}  # fmt: skip
         try:
             return runners[args.command](args, cfg)
         except RuntimeError as err:  # e.g. missing API key: show the message, not a traceback
@@ -101,6 +114,7 @@ def _run_data(args: argparse.Namespace, cfg: dict) -> int:
             max_tokens=cfg["llm"]["generation_max_tokens"],
             effort=cfg["llm"]["generation_effort"],
             limit=args.limit,
+            length_scale=cfg["data"].get("story_length_scale", 1.0),
         )
         print({k: v for k, v in stats.items() if k != "message"})
         if stats["message"]:
@@ -244,6 +258,62 @@ def _run_humanize(args: argparse.Namespace, cfg: dict) -> int:
           f"reading grade {g.fk_grade_before:.1f} -> {g.fk_grade_after:.1f}")
     for flag in g.flags + report.rewrite.warnings:
         print(f"  ! {flag}")
+    return 0
+
+
+def _run_loop(args: argparse.Namespace, cfg: dict) -> int:
+    from pathlib import Path
+
+    from hd.loop import iteration_curve, load_results, summarize
+
+    if args.loop_command == "summary":
+        records = load_results(Path(args.file))
+        print(summarize(records).round(3).to_string(index=False))
+        print("\nMean P(AI) after k rewrites (our detector):")
+        print(iteration_curve(records).round(3).to_string(index=False))
+        return 0
+
+    import pandas as pd
+
+    from hd.detector.explain import Detector
+    from hd.humanizer.feedback import HumanProfile
+    from hd.humanizer.guardrails import SentenceEmbedder
+    from hd.humanizer.pipeline import checker_for, load_thresholds
+    from hd.humanizer.rewrite import Humanizer
+    from hd.llm import make_client
+    from hd.loop import cutoff_for, run_batch, run_loop, select_items
+
+    thresholds = load_thresholds(cfg)
+    our_cut = cutoff_for(thresholds, "ours", args.genre)
+    detector = Detector.load(cfg)
+    profile = HumanProfile.load_or_build(cfg, detector.scorer)
+    llm = cfg["llm"]
+    humanizer = Humanizer(make_client(cfg, resolve_path(cfg, "cache")), llm["humanizer_model"], profile, llm["humanizer_effort"])
+    checker = checker_for(cfg, SentenceEmbedder(), detector.scorer, profile, args.genre)
+    external, ext_cut = None, None
+    if not args.no_external:
+        from hd.detector.external import DesklibDetector
+
+        external, ext_cut = DesklibDetector(), cutoff_for(thresholds, "external", args.genre)
+
+    processed = resolve_path(cfg, "processed")
+    items = select_items(pd.read_parquet(processed / "corpus.parquet"), args.split, args.genre, args.n, cfg["seed"])
+    if items.empty:
+        raise RuntimeError(f"no AI {args.genre} texts in the {args.split} split; generate/build them first")
+    out = Path(args.out) if args.out else processed / f"loop_{args.split}_{args.genre}_{args.strategy}.jsonl"
+    max_iter = args.max_iterations or cfg["loop"]["max_iterations"]
+
+    def run_one(item: dict):
+        print(f"  {item['id']}: {item['n_words']} words ...", flush=True)
+        return run_loop(detector, humanizer, checker, item["text"], args.genre, strategy=args.strategy, our_cutoff=our_cut,
+                        ext_cutoff=ext_cut, external=external, max_iterations=max_iter, item_id=item["id"])  # fmt: skip
+
+    stats = run_batch(items.to_dict("records"), out, run_one)
+    print({k: v for k, v in stats.items() if k != "message"})
+    if stats["message"]:
+        print(stats["message"] + "\nWork so far is saved; run the same command later to continue.")
+    if out.exists() and out.stat().st_size:
+        print(summarize(load_results(out)).round(3).to_string(index=False))
     return 0
 
 
