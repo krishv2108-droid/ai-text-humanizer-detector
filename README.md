@@ -54,17 +54,14 @@ First-pass comparison of prompt strategies (same 10 stories, `qwen3.8-27b`, befo
 Requires [uv](https://docs.astral.sh/uv/) and Python 3.11+ (uv fetches it for you).
 
 ```bash
-uv sync                  # core deps
+uv sync --all-extras     # everything: data, nlp (spaCy + model), ml (PyTorch), embed, llm, app (Streamlit)
 uv run pytest -q         # run tests
 uv run hd --version
 ```
 
-Optional extras are added as milestones need them: `--extra data`, `--extra nlp` (spaCy + model),
-`--extra ml` (PyTorch + transformers), `--extra llm`, `--extra embed`, `--extra app`. Everything so far:
-
-```bash
-uv sync --extra data --extra llm --extra nlp --extra ml
-```
+**Always sync with `--all-extras`.** `uv sync` is exact: running it with fewer extras (or none) *uninstalls* the packages
+of the extras you left out, which breaks the pipeline until you sync again (the wheels stay in uv's cache, so
+restoring is quick and needs no download).
 
 **LLM provider (free tier).** Story generation and the humanizer use a free [Groq](https://console.groq.com)
 key (`llm.provider: groq` in `configs/default.yaml`; `anthropic` is also supported). Put it in a git-ignored
@@ -168,6 +165,24 @@ Validation split, raw human vs raw AI text ([results/external_metrics.csv](resul
 - **Anecdote, not a result:** on one hand-written paragraph mixing casual and stock-AI sentences, our
   detector said 0.002 and desklib 1.000. One example proves nothing, but it fits the concern that ours leans
   on GPT-2 predictability, which a few quirky specifics can move.
+
+## The app (M8)
+
+```bash
+uv run hd app            # same as: uv run streamlit run app/app.py
+```
+
+![The Detect tab: sentence-level shading and what drives the score](reports/app_detect_tab.jpg)
+
+- **Detect:** paste text, get P(AI) and a verdict against the frozen 5%-false-positive cutoff, the text shaded sentence by
+  sentence (hover for the reasons), a chart of which cue groups push the score toward AI or human, and the strongest
+  individual cues. Optionally also scores with the independent detector (desklib, ~1.7 GB model on first use).
+- **Humanize:** choose a prompt strategy, a Groq model and the maximum number of rewrites; the app runs the same adversarial
+  loop as the experiments, shows what you would actually get (a rewrite that fails the guardrails is never presented as the
+  result; rejected attempts sit in a warned expander), every attempt's scores and guardrail flags, and a rough token cost
+  before you spend any of the free-tier quota. A **dry run** shows the exact prompt without calling any API.
+- The app needs the trained models (`hd detector train-baseline`, `train-sentence`, `eval-external`) and, for Humanize, a
+  `GROQ_API_KEY`. It never reads the held-out test split.
 
 ## Evaluation (M7)
 

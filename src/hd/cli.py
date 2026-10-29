@@ -10,7 +10,7 @@ from hd.config import load_config, resolve_path, set_seed
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="hd", description="AI-text detector + humanizer")
+    parser = argparse.ArgumentParser(prog="hd", description="AI-text detector + humanizer. Typical order: data -> features -> detector -> loop -> eval; `hd app` for the web UI.")
     parser.add_argument("--version", action="version", version=f"hd {__version__}")
     parser.add_argument("--config", default=None, help="path to a YAML config")
     sub = parser.add_subparsers(dest="command")
@@ -66,7 +66,9 @@ def build_parser() -> argparse.ArgumentParser:
     summ = loop_sub.add_parser("summary", help="detection rates before/after from a loop log")
     summ.add_argument("file", help="a JSONL log written by `hd loop run`")
 
-    ev = sub.add_parser("eval", help="M7: reports, ablations, the final held-out evaluation, the manual-detector kit")
+    sub.add_parser("app", help="launch the Streamlit app (Detect and Humanize tabs)")
+
+    ev = sub.add_parser("eval", help="reports, ablations, the final held-out evaluation, the manual-detector kit")
     ev_sub = ev.add_subparsers(dest="eval_command", required=True)
     rep = ev_sub.add_parser("report", help="outcome tables (with intervals) and figures from loop logs")
     rep.add_argument("--log", action="append", required=True, help="a loop log (repeatable; logs are concatenated)")
@@ -103,6 +105,11 @@ def main(argv: list[str] | None = None) -> int:
     cfg = load_config(args.config) if args.config else load_config()
     set_seed(cfg["seed"])
 
+    if args.command == "app":
+        import subprocess
+
+        app = resolve_path(cfg, "results").parent / "app" / "app.py"
+        return subprocess.call([sys.executable, "-m", "streamlit", "run", str(app)])
     if args.command in ("data", "features", "detector", "detect", "humanizer", "humanize", "llm", "loop", "eval"):
         runners = {"data": _run_data, "features": _run_features, "detector": _run_detector, "detect": _run_detect,
                    "humanizer": _run_humanizer, "humanize": _run_humanize, "llm": _run_llm, "loop": _run_loop,

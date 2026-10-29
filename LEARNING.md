@@ -290,3 +290,27 @@ likes best; "what a user gets" only counts rewrites that kept the meaning. Repor
 **1 experiment to try:** before running `uv run hd eval ablate-features`, write down which feature group you expect to matter most
 for stories and for casual answers. Then compare "drop" with "only" in `results/ablation_feature_groups.csv`. Where were you wrong,
 and which groups are redundant with each other?
+
+
+---
+
+## Milestone 8: the app, and what testing against the real thing found
+
+**3 takeaways**
+1. **Fakes prove your logic; only the real thing proves your assumptions.** My headless tests (fake models) passed, yet the
+   first real click on "Load example" crashed: Streamlit forbids setting a widget's value after the widget exists, and the
+   fix (an `on_click` callback) was invisible to a test that never clicked that button. I added the missing regression test.
+2. **Never put user text into HTML unescaped.** The sentence shading is built as HTML, so every sentence and every "reason"
+   is escaped, and a test feeds it `<script>` and an attribute-breaking string. A tool that takes pasted text is an input
+   channel for attackers even when it is "just a research app".
+3. **Show what the user gets, not what looks best.** The result panel only displays a rewrite that passed the guardrails;
+   a rejected rewrite lives in an expander labelled "not recommended", and the before/after scores are hidden when there is
+   no kept rewrite. The same rule as the evaluation tables, in the UI.
+
+**Also learned:** `uv sync` is *exact*: running it with fewer extras uninstalls the others. I broke the environment this way
+while installing Streamlit and restored it from uv's local cache (no download). The README now says to always use
+`uv sync --all-extras`. And a long-running server keeps imported modules in memory: after changing library code, restart it.
+
+**1 experiment to try:** in the Humanize tab, run the same paragraph with strategy `naive` and then `full`. Before you click,
+guess which one our detector will flag. Then tick "Also score with the independent detector" and see whether the two
+detectors agree on each rewrite.
