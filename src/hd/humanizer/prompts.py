@@ -15,6 +15,9 @@ STRATEGIES = ("naive", "craft", "feedback", "full")
 # Bump when the wording of any prompt block changes; every loop log records it, so results of different
 # versions are never mixed up. v1: the first pilot (10 validation stories). v2: sentence-coverage and
 # exact-facts requirements, and a moderated rhythm technique (v1 produced staccato caricature).
+# A v3 (story technique: "say it in different, plainer words") was tried and REVERTED: paired on 12 train stories it did
+# not help (desklib on the first rewrite 0.76 -> 0.92, p=0.68; fooled both 2/12 -> 3/12). Its logs are kept as
+# data/processed/*_v3dev.jsonl and are reported as a null result.
 PROMPT_VERSION = "v2"
 
 SYSTEM = (

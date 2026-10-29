@@ -91,6 +91,10 @@ def build_parser() -> argparse.ArgumentParser:
     fin.add_argument("--loop-log", action="append", default=[], help="logs of `hd loop run --split test` runs (repeatable)")
     fin.add_argument("--no-external", action="store_true")
     fin.add_argument("--again", action="store_true", help="repeat a final evaluation that already ran (recorded in the log)")
+    ctl = ev_sub.add_parser("control", help="rule-based controls: do the detectors react to punctuation-only edits? (train split, no LLM)")
+    ctl.add_argument("--genre", choices=["story", "essay", "casual"], default="story")
+    ctl.add_argument("--n", type=int, default=40)
+    ctl.add_argument("--max-words", type=int, default=400)
     mk = ev_sub.add_parser("manual-kit", help="blind sample files + log template for testing commercial AI detectors by hand")
     mk.add_argument("--log", required=True, help="a loop log (use a validation log; the kit exports AI text and rewrites only)")
     mk.add_argument("--n", type=int, default=5, help="how many raw/rewrite pairs")
@@ -375,6 +379,8 @@ def _run_loop(args: argparse.Namespace, cfg: dict) -> int:
 def _run_eval(args: argparse.Namespace, cfg: dict) -> int:
     from pathlib import Path
 
+    import numpy as np
+
     from hd.loop import load_results, log_path
 
     results, processed = resolve_path(cfg, "results"), resolve_path(cfg, "processed")
@@ -435,6 +441,27 @@ def _run_eval(args: argparse.Namespace, cfg: dict) -> int:
         print(pd.read_csv(written["detectors"]).round(3).to_string(index=False))
         for name, path in written.items():
             print(f"  {name}: {path}")
+    elif cmd == "control":
+        import pandas as pd
+
+        from hd.data.splits import load_split
+        from hd.detector.explain import Detector
+        from hd.detector.external import DesklibDetector
+        from hd.eval.control import control_table
+        from hd.humanizer.calibrate import merge_pairs, split_into_fragments
+        from hd.humanizer.pipeline import load_thresholds
+        from hd.loop import cutoff_for
+
+        th = load_thresholds(cfg)
+        corpus = pd.read_parquet(processed / "corpus.parquet")
+        ai = load_split(corpus[corpus["has_pair"]], "train")  # design data only; the test split stays locked
+        ai = ai[(ai.label == 1) & (ai.genre == args.genre) & (ai.n_words <= args.max_words)].sample(args.n, random_state=cfg["seed"])
+        det, ext = Detector.load(cfg), DesklibDetector()
+        table = control_table(ai.text.tolist(), {"split into fragments (punctuation only)": split_into_fragments, "merge sentence pairs": merge_pairs},
+                              lambda ts: np.array([det.analyze(t).prob_ai for t in ts]), ext.predict_proba,
+                              cutoff_for(th, "ours", args.genre), cutoff_for(th, "external", args.genre))  # fmt: skip
+        table.round(4).to_csv(results / f"control_rule_based_{args.genre}_train.csv", index=False)
+        print(table.round(3).to_string(index=False))
     elif cmd == "manual-kit":
         from hd.eval.manual_kit import PROTOCOL, build_manual_kit, write_log_template
 

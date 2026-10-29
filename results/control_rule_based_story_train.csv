@@ -1,0 +1,4 @@
+variant,n,ours_flagged,ours_lo,ours_hi,desklib_flagged,desklib_lo,desklib_hi,desklib_mean
+original,40,1.0,0.9124,1.0,1.0,0.9124,1.0,0.9955
+split into fragments (punctuation only),40,0.175,0.0875,0.3195,0.9,0.7695,0.9604,0.9172
+merge sentence pairs,40,1.0,0.9124,1.0,0.95,0.835,0.9862,0.955

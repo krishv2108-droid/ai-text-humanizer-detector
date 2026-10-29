@@ -249,3 +249,17 @@ def test_joint_success_skips_records_without_the_independent_detector():
     for r in recs:
         r["ext_cutoff"] = None
     assert joint_success(recs)["n"] == 0 and math.isnan(joint_success(recs)["rate"])
+
+
+def test_control_table_flags_at_the_frozen_cutoffs_and_includes_the_original():
+    from hd.eval.control import control_table
+
+    texts = ["aa bb", "cc dd", "ee ff", "gg hh"]
+    ours = lambda ts: np.array([0.9 if "," in t else 0.1 for t in ts])  # a detector that only reacts to commas  # noqa: E731
+    ext = lambda ts: np.array([0.95] * len(ts))  # noqa: E731
+    table = control_table(texts, {"drop comma": lambda t: t.replace(",", "")}, ours, ext, 0.3, 0.7).set_index("variant")
+    assert list(table.index) == ["original", "drop comma"] and (table["n"] == 4).all()
+    assert table.loc["original", "ours_flagged"] == 0.0 and table.loc["original", "desklib_flagged"] == 1.0
+    assert table.loc["drop comma", "desklib_lo"] < 1.0 <= table.loc["drop comma", "desklib_hi"] + 1e-9  # interval, not certainty
+    with_commas = control_table([t.replace(" ", ", ") for t in texts], {"drop comma": lambda t: t.replace(",", "")}, ours, ext, 0.3, 0.7).set_index("variant")
+    assert with_commas.loc["original", "ours_flagged"] == 1.0 and with_commas.loc["drop comma", "ours_flagged"] == 0.0  # the surface-only detector is fooled

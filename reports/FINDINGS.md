@@ -47,43 +47,69 @@ stories, predictability adds nothing; the giveaway is grammatical mix (more noun
 pronouns, long comma-heavy sentences) and punctuation. A cue that exposes one generator does not transfer to another.
 The story signal is not an em-dash artifact: dropping the em dash or all punctuation features leaves AUC at 0.99+.
 
-## 2. Can the text be rewritten to look human? (pilot: 10 validation stories, 400 words or fewer)
+## 2. Can the text be rewritten to look human?
 
-Humanizer `qwen3.8-27b`, `full` prompt, up to 4 rewrites, guardrails on, cutoffs frozen at 5% false positives.
-Rates are shown with 95% Wilson intervals, because n=10 makes them wide (`results/loop_reports/`).
+Headline measure: a rewrite **counts** only if it passes every guardrail (meaning similarity, dropped and invented content,
+length, reading level, typos, and since v2 that numbers and names survive) **and** neither detector flags it. A failed rewrite
+means the user keeps the original, which is flagged, so it never counts as a success.
+
+**Baseline (prompt v1).** 34 validation stories of at most 400 words, humanizer `qwen3.8-27b`, `full` prompt, up to 4 rewrites,
+cutoffs frozen at 5% false positives, 95% Wilson intervals (`results/loop_reports/outcomes_story_val_full_qwen_v1_n34.*`):
 
 | | Flagged before | Flagged after the loop |
 |---|---|---|
-| Our detector (steers the loop) | 90% (60-98%) | 0% (0-28%) |
-| Independent detector, desklib | 100% (72-100%) | 60% (31-83%) |
+| Our detector (steers the loop) | 97% (85-100%) | 6% (2-19%) |
+| Independent detector, desklib | 100% (90-100%) | 68% (51-81%) |
+| Kept rewrite fools both | | 11 of 34 = 32% (19-49%) |
 
-Prompt strategies, first rewrite of each story (`results/ablation_prompts_story_val_qwen3.8-27b_le400w.csv`):
+Replaying the v2 fact guard over those kept rewrites: 10 of 34 (29%, 17-46%), and 4 of the 32 kept rewrites had lost a number or
+a name that the old guardrails did not check. (The earlier 10-story pilot reported desklib 60% flagged; the larger sample says 68%.)
 
-| Strategy | Our detector flags | Desklib flags | Kept the meaning (guardrails) |
-|---|---|---|---|
-| naive ("sound human") | 100% | 100% | 100% |
-| feedback (detector's findings) | 20% | 90% | 100% |
-| craft (technique list) | 0% | 0% | 10% |
-| full (both) | 0% | 30% | 40% |
+**Why it plateaus: fidelity versus evasion** (`results/frontier_story_replay_v1_v2dev.csv`; 100 rewrites with desklib scores):
 
-What this suggests, with the strength of each claim:
+| Meaning similarity of the rewrite | Fooled desklib | Passed the guardrails |
+|---|---|---|
+| over 0.90 | 9% | 97% |
+| 0.85 to 0.90 | 35% | 85% |
+| 0.80 to 0.85 | 61% | 57% |
+| under 0.80 | 91-100% | 0% |
 
-1. *Steering by one detector transfers poorly to another.* Feedback alone fools ours (20% flagged) but not desklib (90%).
-   Consistent across the pilot; would need the larger evaluation to quantify.
-2. *Evasion trades against fidelity.* The technique list fooled both detectors but only 1 in 10 of those rewrites passed
-   the guardrails. The loop's accepted rewrites have a mean meaning-similarity of 0.86.
-3. *The rewrites overshoot human style.* Compared with human stories, kept rewrites have more short sentences (+0.9 human
-   standard deviations; raw AI is -1.4) and more unpredictable wording than humans (`results/loop_reports/figures/feature_shift_*.png`).
-   They read as staccato ("Honking. Drone hums."). A detector trained on such rewrites would probably catch them; that
-   retraining defense is not built.
-4. *The humanizer model matters.* `gpt-oss-20b` (same family as the story generator) left detection almost unchanged
-   (ours 90% -> 90%, desklib 100% -> 90%) and stalled on 7 of 10 stories.
+Desklib's score has a Spearman correlation of 0.73 with meaning similarity (0.68 with bigram overlap; the two overlap, r = 0.83).
+Replaying different similarity floors over the stored attempts (an approximation: only attempts the loop actually made exist),
+"fools both" is about 30% at a floor of 0.80, 15% at 0.85 and 6% at 0.88 or above. Faithful rewrites keep what desklib
+recognizes; the guardrail floor sits exactly where evasion becomes common. This is a trade-off, not a prompt bug.
+
+**Our own detector is gameable; desklib is not (by the same trick).** Control on 40 train stories (`hd eval control`;
+`results/control_rule_based_story_train.csv`), changing only punctuation and sentence boundaries, no content word altered:
+
+| Variant | Ours flagged | Desklib flagged |
+|---|---|---|
+| original | 100% (91-100%) | 100% (91-100%) |
+| split into fragments | 18% (9-32%) | 90% (77-96%) |
+| merge sentence pairs | 100% | 95% (84-99%) |
+
+So most of "ours 6% flagged" reflects surface rhythm and punctuation features, not better text. This is also a no-LLM
+baseline for the humanizer: it fools our detector 82% of the time and desklib 10%, versus the LLM loop's 94% and 32% (different story sets: 40 train versus 34 validation stories).
+
+**What else was tried (logs in `data/processed/loop_train_*`, 12 train stories each, paired where noted):**
+
+| Change | Result |
+|---|---|
+| Prompt v2: repair mode (fix the rejected rewrite, name the missing sentences/numbers), two-sided feedback (tell an overshot rewrite to come back), number-and-name guard, moderated rhythm | Kept 12/12, meaning similarity 0.90, no lost numbers, no caricature (short sentences +0.05 human standard deviations, v1 +1.06). Fooled both on 2 of 12 (5-45%): no measurable gain over v1's 32%; n too small to rule out a difference either way |
+| Prompt v3: plus "say it in different, plainer words" | **No effect**: desklib on the first rewrite 0.76 (v2) vs 0.92 (v3), paired p = 0.68; fooled both 3 of 12. Reverted |
+| Humanizer `gpt-oss-120b` (same family as the story generator) | Tiny edits (similarity 0.97), fooled both on 0 of 9 (0-30%); hit its daily limit before 12 |
+| Humanizer `gpt-oss-20b` (pilot, 10 stories) | Ours 90% to 90%, desklib 100% to 90%, stalled on 7 of 10 |
+| Span-based content check (match runs of 2-3 sentences) | Useless (AUC about 0.5); removed. The existing sentence-level check already separates deleting or swapping sentences from merely splitting or merging them (AUC 0.96 / 0.94, `hd humanizer check-restructuring`), which refuted my guess that it punished fragments |
+
+**Prompt strategies, first rewrite, pilot (10 validation stories, v1, `results/ablation_prompts_story_val_qwen3.8-27b_le400w.csv`):**
+naive 100% / 100% still flagged (ours / desklib); feedback 20% / 90%; craft 0% / 0% but only 10% pass the guardrails; full 0% / 30%
+and 40% pass. Feedback steered by our detector transfers badly to desklib; the technique list fools both but breaks the meaning.
 
 **A guardrail changed after seeing real rewrites.** The original reading-level rule (grade may not move more than 3
 levels) rejected 8 of 10 qwen rewrites even though AI stories read at grade 8.3 and human stories at 5.0. It now requires
 the rewrite's grade to lie within the range of real human text for the genre (1st-99th percentile of train-split human
-texts). With the old rule the same loop ended with ours 80% and desklib 100% flagged, 20% of rewrites accepted
-(`data/processed/..._fkdelta-rule.jsonl`, summary in `results/loop_pilot_story_val_qwen.csv`). Because the change was
+texts). With the old rule the same 10-story loop ended with ours 80% and desklib 100% flagged, 20% of rewrites accepted
+(`data/processed/..._fkdelta-rule.jsonl`, `results/loop_pilot_story_val_qwen.csv`). Because the change was
 motivated by this pilot, the final evaluation must report both rules.
 
 ## 3. Limitations
@@ -96,8 +122,10 @@ motivated by this pilot, the final evaluation must report both rules.
   verify that. Its calibration is poor at 0.5 (it flags ~24% of human validation text), so all comparisons use matched 5%
   false-positive cutoffs.
 - **The cutoffs are noisy.** The story cutoff comes from 50 human validation stories; 5% of 50 is 2-3 texts.
-- **Small samples.** The humanizer pilot is 10 stories of at most 400 words, one humanizer model, one run per setting. The
-  Wilson intervals are about +/-25 points. No result in section 2 is established beyond "worth testing at scale".
+- **Small samples.** The main humanizer result is 34 stories of at most 400 words (intervals about +/-15 points), the v2 and v3
+  comparisons are 12 stories (about +/-20-25 points), the strategy ablation is 10. One humanizer model works at all. Treat v2 versus v1 as undecided.
+- **The humanizer is limited by what free models can do.** The two models of the generator's own family make near-copies; only
+  `qwen3.8-27b` rewrites enough, and it fools desklib on about a third of stories at the meaning floor used.
 - **The length confound is only partly removed.** HC3 ChatGPT answers are about twice as long as human ones. Length-stratified AUC
   reduces but does not eliminate this (a worst-case simulation still scores 0.50-0.60). Story lengths were matched at generation.
 - **"Essay" is explanatory Q&A, not essays,** and medicine human answers carry a doctor-forum greeting, a genre-specific shortcut.
@@ -124,9 +152,9 @@ The test split (15% of prompts, never used for training, tuning or threshold sel
 - reports per genre, per detector: AUC, AI caught, human flagged (each with intervals), plus the loop outcome tables for any
   test-split loop logs (`hd loop run --split test --unlock-test`, also logged).
 
-Decisions already fixed before looking at test data: which humanizer settings to run (the `full` strategy, and the four-strategy
-ablation), the guardrail rule (reported under both reading-level rules), and that results from different humanizer models are
-reported separately and never pooled. When it runs, this section gets replaced with the actual numbers, including any
+Decisions already fixed before looking at test data: the humanizer model (`qwen3.8-27b`, the only one that rewrites enough), the
+`full` strategy with prompt v2 and repair on (prompt v1 is reported as the baseline), the guardrail rule (reported under both
+reading-level rules), and that results from different humanizer models or prompt versions are reported separately and never pooled. When it runs, this section gets replaced with the actual numbers, including any
 that disappoint.
 
 ## Reproduce

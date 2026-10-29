@@ -294,6 +294,7 @@ def test_every_strategy_demands_full_coverage_and_exact_facts_and_the_version_is
         user = build_prompt("Some draft.", "story", strategy, fb if strategy in ("feedback", "full") else None)[1]
         assert "sentence by sentence" in user and "exactly as written" in user
     assert "do not turn every sentence into a fragment" in build_prompt("Some draft.", "story", "craft")[1]
+    assert "Say it in your own words" not in build_prompt("Some draft.", "story", "craft")[1]  # the reverted v3 lever stays out
     assert PROMPT_VERSION == "v2"
 
 

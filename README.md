@@ -5,34 +5,38 @@ human, and which linguistic features give AI text away?
 
 ## Results summary
 
-**These are pilot numbers, not the final result.** They come from 10 *validation* stories of at most 400
-words and one humanizer model (`qwen3.8-27b`), so every rate has a wide margin (with n=10, 60% could easily be
-30% or 90% on new data). The held-out test evaluation (M7) has not been run.
+**Development results, not the final result.** Everything here comes from the training or *validation* split. The
+held-out test evaluation has not been run, and the humanizer experiments are small (one humanizer model, short stories),
+so every rate carries a 95% interval.
 
-"Flagged" means above the cutoff that flags 5% of real human text, fixed in advance for each detector.
-Stories, validation split, the loop with the `full` prompt and guardrails on:
+"Flagged" means above the cutoff that flags 5% of real human text, fixed in advance for each detector. The headline
+question is: **for what share of AI stories does the user end up with a rewrite that keeps the meaning (passes every
+guardrail) and that neither detector flags?**
 
-| Text | Own detector (flagged as AI) | Independent detector, desklib (flagged as AI) |
-|------|------------------------------|-----------------------------------------------|
-| Raw AI stories | 90% | 100% |
-| After the loop | 0% | 60% |
+Stories of at most 400 words, validation split, humanizer `qwen3.8-27b`, `full` prompt, prompt v1 (`results/loop_reports/outcomes_story_val_full_qwen_v1_n34.md`):
 
-What the pilot suggests (each point needs the full evaluation before it is a finding):
+| n = 34 stories | Own detector (steers the loop) | Independent detector, desklib (never steers) |
+|---|---|---|
+| Raw AI stories flagged | 97% (85-100%) | 100% (90-100%) |
+| Flagged after the loop | 6% (2-19%) | **68% (51-81%)** |
+| **Rewrite kept, passes guardrails, fools BOTH detectors** | **32% (19-49%)** (11 of 34) | |
 
-- **Optimizing against a detector transfers badly.** One rewrite steered only by our detector's feedback
-  (`feedback`) leaves 20% flagged by ours but 90% by desklib. Beating the detector that steers you is not evidence of
-  looking human.
-- **Evasion costs fidelity.** The `craft` technique list fooled both detectors on every story (0% flagged) but
-  only 10% of those rewrites passed the guardrails (meaning drift, reading level). The loop's accepted rewrites
-  keep a mean meaning-similarity of 0.86.
-- **"Make it sound human" alone does nothing** (`naive`: 100% still flagged, similarity 0.98).
-- **The winning style is a caricature.** The accepted rewrites are staccato and fragment-heavy ("Honking. Drone
-  hums."), the opposite extreme from the long, comma-heavy AI draft. A detector trained on such rewrites would
-  probably catch them; that retraining step is not built yet.
-- **The model matters.** The same loop with `gpt-oss-20b` (same family as the story generator) left detection
-  unchanged (ours 90% -> 90%, desklib 100% -> 90%) and stalled on 7 of 10 stories.
+What we learned (details and limitations in `reports/FINDINGS.md`):
 
-First-pass comparison of prompt strategies (same 10 stories, `qwen3.8-27b`, before guardrails; `results/ablation_prompts_story_val_qwen3.8-27b_le400w.csv`):
+- **Fooling our own detector is easy and says little.** Changing only punctuation and sentence boundaries, with every content
+  word untouched, drops our detector from 100% to 18% flagged but leaves desklib at 90% (`hd eval control`, 40 train stories).
+  Beating the detector that steers you is not evidence of looking human; the independent detector is what counts.
+- **Fooling desklib costs fidelity.** Across 100 rewrites, desklib's score tracks how much of the story survives
+  (Spearman 0.73 with meaning similarity). Rewrites that keep over 0.90 similarity fool desklib 9% of the time; at 0.80-0.85, 61%;
+  below 0.80 nearly always, but those fail the guardrails. Replayed over our attempts, "fools both" is about 30% at a meaning
+  floor of 0.80, 15% at 0.85 and 6% at 0.88 or above (`results/frontier_story_replay_v1_v2dev.csv`).
+- **"Make it sound human" alone does nothing** (naive prompt: 100% still flagged). The model family matters too: the same loop
+  with `gpt-oss-20b` or `gpt-oss-120b` (the story generator's family) makes tiny edits (similarity 0.97) and fools neither detector.
+- **Humanizer v2 (repair mode, two-sided feedback, number-and-name guard) did not measurably raise that 32%.** On 12 train
+  stories it kept more meaning (0.90) and never lost a number, but fooled both detectors on 2 of 12 (5-45%); a further wording
+  lever (v3) was tried and reverted (no effect, paired p = 0.68). With n = 12 these runs cannot rule out a small difference.
+
+First-pass comparison of prompt strategies (10 validation stories, `qwen3.8-27b`, prompt v1, before guardrails; still a pilot):
 
 | Strategy | Ours flagged | desklib flagged | Passes guardrails | Meaning similarity |
 |----------|--------------|-----------------|-------------------|--------------------|
