@@ -9,6 +9,11 @@ A running glossary. Terms are added as we meet them.
 - **Goodhart's law (here: overfitting to the steering detector):** when a measure becomes the target, it stops
   being a good measure. If the humanizer is steered by our detector's feedback, beating *our* detector says little;
   the independent detector, never used to steer, is the honest check.
+- **Confidence interval (Wilson):** a range of plausible true rates given a small sample. 6 of 10 texts flagged is a
+  60% *measured* rate, but the true rate could plausibly be anywhere from 31% to 83%. We report intervals so a small pilot
+  is not mistaken for a result.
+- **Ablation:** removing or isolating one part of a system to see what it contributes. "Drop" asks what is lost without it;
+  "only" asks what it can do alone. They differ when parts are redundant.
 - **Seed:** a number that fixes the "random" choices a program makes (shuffling data, initial
   weights) so rerunning gives the same results. Ours is 42 in `configs/default.yaml`.
 - **Held-out test set:** data the model never sees while training or tuning. It is the only honest
@@ -264,3 +269,24 @@ quota. Every result file records which model wrote the rewrites, and models are 
 --strategy full`, then open the log (`data/processed/loop_val_story_full_*.jsonl`) and read the last kept rewrite
 of three stories next to their originals. Would you have guessed a human wrote them? What does your answer say about
 what our detector and desklib each pay attention to?
+
+
+---
+
+## Milestone 7: evaluation tooling and the held-out set
+
+**3 takeaways**
+1. **The interval is part of the result.** With 10 texts, "60% flagged" means "somewhere between 31% and 83%". Every rate in
+   the reports carries a Wilson interval, and FINDINGS.md says which claims survive that and which are only "worth testing".
+2. **A held-out set is a budget, not a resource.** Each time you look at it and react, it leaks into your decisions. So the code
+   opens it from one command, logs every access, refuses a second final run, and the report must disclose any repeats. Decisions
+   (which settings, which guardrail rule) are written down before looking.
+3. **Cues are specific to a generator.** Dropping GPT-2 predictability costs 0.02 AUC on 2022-ChatGPT essays but nothing on the newer
+   model's stories, where grammar and punctuation carry the signal. A detector built on one generator's tells is not a detector of AI.
+
+**Also learned:** two numbers can look alike but answer different questions. "Fooled the detector" counts the rewrite our detector
+likes best; "what a user gets" only counts rewrites that kept the meaning. Reporting both, side by side, shows what fidelity costs.
+
+**1 experiment to try:** before running `uv run hd eval ablate-features`, write down which feature group you expect to matter most
+for stories and for casual answers. Then compare "drop" with "only" in `results/ablation_feature_groups.csv`. Where were you wrong,
+and which groups are redundant with each other?

@@ -1,0 +1,5 @@
+genre,strategy,model,policy,detector,n,flagged_before,before_lo,before_hi,flagged_after,after_lo,after_hi,n_detected_before,evaded_of_detected,rewrite_accepted,mean_similarity_kept
+story,full,qwen/qwen3.8-27b,kept,ours,10,0.9,0.5958,0.9821,0.0,0.0,0.2775,9,1.0,1.0,0.8629
+story,full,qwen/qwen3.8-27b,kept,desklib,10,1.0,0.7225,1.0,0.6,0.3127,0.8318,10,0.4,1.0,0.8629
+story,full,qwen/qwen3.8-27b,unguarded,ours,10,0.9,0.5958,0.9821,0.0,0.0,0.2775,9,1.0,1.0,0.8629
+story,full,qwen/qwen3.8-27b,unguarded,desklib,10,1.0,0.7225,1.0,0.3,0.1078,0.6032,10,0.7,1.0,0.8629

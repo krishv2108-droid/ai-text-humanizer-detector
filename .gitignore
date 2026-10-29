@@ -13,3 +13,6 @@ data/processed/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
 models/
+
+# manual detector test samples (generated AI text; regenerate with hd eval manual-kit)
+reports/manual_kit/

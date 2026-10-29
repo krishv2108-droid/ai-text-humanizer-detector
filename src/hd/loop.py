@@ -148,6 +148,12 @@ def select_items(corpus: pd.DataFrame, split: str, genre: str, n: int, seed: int
     return part.sort_values("_order").head(n).drop(columns="_order").reset_index(drop=True)
 
 
+def log_path(processed: Path, split: str, genre: str, strategy: str, model: str, max_words: int | None = None) -> Path:
+    """Where `hd loop run` writes its log for a given setup (shared with the report commands)."""
+    short = f"_le{max_words}w" if max_words else ""
+    return processed / f"loop_{split}_{genre}_{strategy}_{model.split('/')[-1]}{short}.jsonl"
+
+
 def run_batch(items: Iterable[dict[str, Any]], out_path: Path, run_one: Callable[[dict[str, Any]], LoopResult]) -> dict[str, Any]:
     """Run the loop over many texts, appending one JSON line each. Resumable; stops cleanly at a rate limit."""
     out_path.parent.mkdir(parents=True, exist_ok=True)

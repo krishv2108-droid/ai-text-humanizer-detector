@@ -32,7 +32,7 @@ What the pilot suggests (each point needs the full evaluation before it is a fin
 - **The model matters.** The same loop with `gpt-oss-20b` (same family as the story generator) left detection
   unchanged (ours 90% -> 90%, desklib 100% -> 90%) and stalled on 7 of 10 stories.
 
-First-pass comparison of prompt strategies (same 10 stories, `qwen3.8-27b`, before guardrails; `results/ablation_pilot_story_val_qwen_first_pass.csv`):
+First-pass comparison of prompt strategies (same 10 stories, `qwen3.8-27b`, before guardrails; `results/ablation_prompts_story_val_qwen3.8-27b_le400w.csv`):
 
 | Strategy | Ours flagged | desklib flagged | Passes guardrails | Meaning similarity |
 |----------|--------------|-----------------|-------------------|--------------------|
@@ -81,7 +81,7 @@ provider's rate-limit headers, and batch jobs stop cleanly at a daily limit and 
 ## Project status
 
 Built in small milestones, one commit each (see `git log`); per-milestone notes are in
-`LEARNING.md`. Current: **M6 - adversarial loop** (built; first pilot on 10 validation stories, see the results summary). The 293 AI stories are generated. Next: M7 (full evaluation on the held-out test split, ablations, FINDINGS.md) and M8 (app). The free Groq tier allows only about 65 rewrites per model per day, which sets the size of the experiments.
+`LEARNING.md`. Current: **M7 - evaluation tooling** (built and tested; the held-out test evaluation has not been run; the full write-up is in `reports/FINDINGS.md`). The 293 AI stories are generated and a 10-story pilot of the loop has run. Next: grow the samples within the daily quota, run the final evaluation once, and M8 (app). The free Groq tier allows only about 65 rewrites per model per day, which sets the size of the experiments.
 
 ## What gives AI text away? (preliminary, M2)
 
@@ -168,6 +168,23 @@ Validation split, raw human vs raw AI text ([results/external_metrics.csv](resul
 - **Anecdote, not a result:** on one hand-written paragraph mixing casual and stock-AI sentences, our
   detector said 0.002 and desklib 1.000. One example proves nothing, but it fits the concern that ours leans
   on GPT-2 predictability, which a few quirky specifics can move.
+
+## Evaluation (M7)
+
+```bash
+uv run hd eval report --log <loop log> --features     # outcome tables with 95% intervals + figures (before/after, iterations, feature shift)
+uv run hd eval ablate-prompts --genre story --model qwen/qwen3.8-27b --max-words 400
+uv run hd eval ablate-features                          # detector AUC with each feature group dropped / on its own
+uv run hd eval manual-kit --log <loop log> --n 5        # blind samples + log for testing commercial detectors by hand
+uv run hd eval final --unlock-test                      # THE held-out test evaluation: runs once, every unlock is logged
+```
+
+Honesty rules built into the code: every rate has a Wilson interval (with a few dozen texts the interval is part of the
+result); the loop reports both what a user would actually get (a failed rewrite is never credited as a success) and the
+unguarded best rewrite; the independent detector never steers anything; the test split is opened only by `hd eval final`
+and `hd loop run --split test --unlock-test`, each logged in `results/test_access_log.txt`, and the final evaluation refuses
+to run twice without `--again`. Detector feature-group ablation (what gives AI text away) and all caveats are in
+`reports/FINDINGS.md`.
 
 ## The humanizer (M5)
 

@@ -54,7 +54,8 @@ def build_parser() -> argparse.ArgumentParser:
     loop_sub = loop.add_subparsers(dest="loop_command", required=True)
     run = loop_sub.add_parser("run", help="run the loop over a sample of AI texts (resumable; logs every iteration)")
     run.add_argument("--genre", choices=["story", "essay", "casual"], default="story")
-    run.add_argument("--split", choices=["train", "val"], default="val", help="the test split is only used by the final evaluation")
+    run.add_argument("--split", choices=["train", "val", "test"], default="val", help="'test' is only for the final evaluation and needs --unlock-test")
+    run.add_argument("--unlock-test", action="store_true", help="confirm that this run uses the held-out test split (logged in results/test_access_log.txt)")
     run.add_argument("--n", type=int, default=10, help="how many AI texts (a larger n extends the same sample)")
     run.add_argument("--strategy", choices=["naive", "craft", "feedback", "full"], default="full")
     run.add_argument("--model", help="humanizer model (default: llm.humanizer_model); each Groq model has its own daily token pool")
@@ -64,6 +65,29 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--out", help="JSONL log (default: data/processed/loop_<split>_<genre>_<strategy>_<model>.jsonl)")
     summ = loop_sub.add_parser("summary", help="detection rates before/after from a loop log")
     summ.add_argument("file", help="a JSONL log written by `hd loop run`")
+
+    ev = sub.add_parser("eval", help="M7: reports, ablations, the final held-out evaluation, the manual-detector kit")
+    ev_sub = ev.add_subparsers(dest="eval_command", required=True)
+    rep = ev_sub.add_parser("report", help="outcome tables (with intervals) and figures from loop logs")
+    rep.add_argument("--log", action="append", required=True, help="a loop log (repeatable; logs are concatenated)")
+    rep.add_argument("--tag", help="name for the output files (default: first log's name)")
+    rep.add_argument("--out-dir", help="default: results/loop_reports")
+    rep.add_argument("--features", action="store_true", help="also compute the feature-shift figure (loads GPT-2; slower)")
+    abp = ev_sub.add_parser("ablate-prompts", help="compare prompt strategies (first rewrite of each text) from existing loop logs")
+    abp.add_argument("--genre", choices=["story", "essay", "casual"], default="story")
+    abp.add_argument("--split", choices=["train", "val"], default="val")
+    abp.add_argument("--model", required=True, help="the humanizer model the logs were made with")
+    abp.add_argument("--max-words", type=int)
+    abf = ev_sub.add_parser("ablate-features", help="detector: AUC with each feature group dropped / on its own (train+val only)")
+    abf.add_argument("--n-boot", type=int, default=200)
+    fin = ev_sub.add_parser("final", help="THE held-out test evaluation; runs once (logged)")
+    fin.add_argument("--unlock-test", action="store_true", help="required: confirms you mean to use the test split")
+    fin.add_argument("--loop-log", action="append", default=[], help="logs of `hd loop run --split test` runs (repeatable)")
+    fin.add_argument("--no-external", action="store_true")
+    fin.add_argument("--again", action="store_true", help="repeat a final evaluation that already ran (recorded in the log)")
+    mk = ev_sub.add_parser("manual-kit", help="blind sample files + log template for testing commercial AI detectors by hand")
+    mk.add_argument("--log", required=True, help="a loop log (use a validation log; the kit exports AI text and rewrites only)")
+    mk.add_argument("--n", type=int, default=5, help="how many raw/rewrite pairs")
 
     detect = sub.add_parser("detect", help="P(AI), per-sentence breakdown and drivers for a text")
     detect.add_argument("text", nargs="?", help="the text (or use --file / stdin)")
@@ -79,9 +103,10 @@ def main(argv: list[str] | None = None) -> int:
     cfg = load_config(args.config) if args.config else load_config()
     set_seed(cfg["seed"])
 
-    if args.command in ("data", "features", "detector", "detect", "humanizer", "humanize", "llm", "loop"):
+    if args.command in ("data", "features", "detector", "detect", "humanizer", "humanize", "llm", "loop", "eval"):
         runners = {"data": _run_data, "features": _run_features, "detector": _run_detector, "detect": _run_detect,
-                   "humanizer": _run_humanizer, "humanize": _run_humanize, "llm": _run_llm, "loop": _run_loop}  # fmt: skip
+                   "humanizer": _run_humanizer, "humanize": _run_humanize, "llm": _run_llm, "loop": _run_loop,
+                   "eval": _run_eval}  # fmt: skip
         try:
             return runners[args.command](args, cfg)
         except RuntimeError as err:  # e.g. missing API key: show the message, not a traceback
@@ -283,8 +308,10 @@ def _run_loop(args: argparse.Namespace, cfg: dict) -> int:
     from hd.humanizer.pipeline import checker_for, load_thresholds
     from hd.humanizer.rewrite import Humanizer
     from hd.llm import make_client
-    from hd.loop import cutoff_for, run_batch, run_loop, select_items
+    from hd.loop import cutoff_for, log_path, run_batch, run_loop, select_items
 
+    if args.split == "test" and not args.unlock_test:
+        raise RuntimeError("the test split is only for the final evaluation; pass --unlock-test to confirm (the access is logged)")
     thresholds = load_thresholds(cfg)
     our_cut = cutoff_for(thresholds, "ours", args.genre)
     detector = Detector.load(cfg)
@@ -300,13 +327,16 @@ def _run_loop(args: argparse.Namespace, cfg: dict) -> int:
         external, ext_cut = DesklibDetector(), cutoff_for(thresholds, "external", args.genre)
 
     processed = resolve_path(cfg, "processed")
+    on_test = args.split == "test"
+    if on_test:
+        from hd.eval.final import log_test_access
+
+        log_test_access(cfg, f"loop run genre={args.genre} n={args.n} strategy={args.strategy} model={model}")
     items = select_items(pd.read_parquet(processed / "corpus.parquet"), args.split, args.genre, args.n, cfg["seed"],
-                         max_words=args.max_words)
+                         max_words=args.max_words, unlock_test=on_test)
     if items.empty:
         raise RuntimeError(f"no AI {args.genre} texts in the {args.split} split; generate/build them first")
-    slug = model.split("/")[-1]
-    short = f"_le{args.max_words}w" if args.max_words else ""
-    out = Path(args.out) if args.out else processed / f"loop_{args.split}_{args.genre}_{args.strategy}_{slug}{short}.jsonl"
+    out = Path(args.out) if args.out else log_path(processed, args.split, args.genre, args.strategy, model, args.max_words)
     max_iter = args.max_iterations or cfg["loop"]["max_iterations"]
 
     def run_one(item: dict):
@@ -320,6 +350,81 @@ def _run_loop(args: argparse.Namespace, cfg: dict) -> int:
         print(stats["message"] + "\nWork so far is saved; run the same command later to continue.")
     if out.exists() and out.stat().st_size:
         print(summarize(load_results(out)).round(3).to_string(index=False))
+    return 0
+
+
+def _run_eval(args: argparse.Namespace, cfg: dict) -> int:
+    from pathlib import Path
+
+    from hd.loop import load_results, log_path
+
+    results, processed = resolve_path(cfg, "results"), resolve_path(cfg, "processed")
+    cmd = args.eval_command
+
+    if cmd == "report":
+        from hd.eval.loop_report import feature_shift, outcome_table, to_markdown, write_loop_report
+
+        records = [r for log in args.log for r in load_results(Path(log))]
+        tag = args.tag or Path(args.log[0]).stem.removeprefix("loop_")
+        shift = None
+        if args.features:
+            from hd.detector.explain import Detector
+            from hd.humanizer.feedback import HumanProfile
+            from hd.humanizer.pipeline import COMPARE
+
+            detector = Detector.load(cfg)
+            profile = HumanProfile.load_or_build(cfg, detector.scorer)
+            shift = feature_shift(records, lambda t: detector.analyze(t).features, profile, records[0]["genre"], COMPARE)
+        out = Path(args.out_dir) if args.out_dir else results / "loop_reports"
+        written = write_loop_report(records, out, tag, f"{len(records)} texts, frozen 5%-false-positive cutoffs", shift)
+        print(to_markdown(outcome_table(records, "kept").round(3), percent=("flagged_before", "before_lo", "before_hi", "flagged_after", "after_lo", "after_hi", "evaded_of_detected", "rewrite_accepted")))
+        for name, path in written.items():
+            print(f"  {name}: {path}")
+    elif cmd == "ablate-prompts":
+        from hd.eval.loop_report import first_pass_table, plot_strategy_ablation, to_markdown
+        from hd.humanizer.prompts import STRATEGIES
+
+        by = {s: load_results(p) for s in STRATEGIES if (p := log_path(processed, args.split, args.genre, s, args.model, args.max_words)).exists()}
+        if not by:
+            raise RuntimeError("no loop logs found for that genre/split/model; run `hd loop run` for each strategy first")
+        table = first_pass_table(by)
+        short = f"_le{args.max_words}w" if args.max_words else ""
+        stem = f"ablation_prompts_{args.genre}_{args.split}_{args.model.split('/')[-1]}{short}"
+        table.round(4).to_csv(results / f"{stem}.csv", index=False)
+        (results / f"{stem}.md").write_text(to_markdown(table[["strategy", "n", "ours_flagged", "desklib_flagged", "guardrails_ok", "mean_similarity", "mean_reading_grade"]], percent=("ours_flagged", "desklib_flagged", "guardrails_ok")))
+        (results / "figures").mkdir(exist_ok=True)
+        plot_strategy_ablation(table, results / "figures" / f"{stem}.png", "Prompt strategies, first rewrite of each text",
+                               f"{args.genre}, {args.split} split, humanizer {args.model.split('/')[-1]}, n={int(table.n.max())}; bars show 95% intervals")  # fmt: skip
+        print(to_markdown(table[["strategy", "n", "ours_flagged", "desklib_flagged", "guardrails_ok", "mean_similarity", "mean_reading_grade"]], percent=("ours_flagged", "desklib_flagged", "guardrails_ok")))
+        print(f"wrote {results / (stem + '.csv')}")
+    elif cmd == "ablate-features":
+        from hd.eval.ablation import group_ablation, load_ablation_frame, plot_group_drop
+
+        table = group_ablation(load_ablation_frame(cfg), seed=cfg["seed"], n_boot=args.n_boot)
+        table.round(4).to_csv(results / "ablation_feature_groups.csv", index=False)
+        (results / "figures").mkdir(exist_ok=True)
+        plot_group_drop(table, results / "figures" / "ablation_feature_groups.png", "What the detector loses without each feature group")
+        print(table[table.condition.str.startswith(("all", "drop:"))].pivot(index="condition", columns="genre", values="auc").round(3).to_string())
+    elif cmd == "final":
+        if not args.unlock_test:
+            raise RuntimeError("the final evaluation uses the held-out test split once; pass --unlock-test to confirm")
+        from hd.eval.final import run_final
+
+        written = run_final(cfg, [Path(p) for p in args.loop_log], external=not args.no_external, again=args.again)
+        import pandas as pd
+
+        print(pd.read_csv(written["detectors"]).round(3).to_string(index=False))
+        for name, path in written.items():
+            print(f"  {name}: {path}")
+    elif cmd == "manual-kit":
+        from hd.eval.manual_kit import PROTOCOL, build_manual_kit, write_log_template
+
+        reports = resolve_path(cfg, "results").parent / "reports"
+        key = build_manual_kit(load_results(Path(args.log)), reports / "manual_kit", args.n, cfg["seed"])
+        write_log_template(reports / "manual_detector_log.csv", [k["sample"] for k in key])
+        (reports / "manual_detector_log.md").write_text(PROTOCOL)
+        print(f"wrote {len(key)} blind samples to {reports / 'manual_kit'} (answer key: answer_key.csv, do not open it yet)")
+        print(f"fill in {reports / 'manual_detector_log.csv'}; the protocol is in {reports / 'manual_detector_log.md'}")
     return 0
 
 
