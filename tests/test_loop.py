@@ -25,6 +25,8 @@ class FakeDetector:
 class FakeHumanizer:
     """Returns scripted rewrites in order (an Exception in the script is raised) and records every call."""
 
+    model = "fake/model-1"
+
     def __init__(self, outputs):
         self.outputs, self.calls = list(outputs), []
 
@@ -226,3 +228,12 @@ def test_iteration_curve_carries_finished_texts_forward():
     curve = iteration_curve([a, b])
     assert list(curve["rewrites"]) == [0, 1, 2]
     assert curve["mean_ours"].round(3).tolist() == [0.9, 0.45, 0.4]
+
+
+def test_results_record_the_humanizer_model_and_summaries_keep_models_apart():
+    a = result_for("a", [0.9, 0.1], ["r1"]).to_dict()
+    b = result_for("b", [0.9, 0.1], ["r1"]).to_dict()
+    assert a["humanizer_model"] == "fake/model-1"
+    b["humanizer_model"] = "other/model-2"
+    table = summarize([a, b])
+    assert sorted(table["model"]) == ["fake/model-1", "other/model-2"] and (table["n"] == 1).all()

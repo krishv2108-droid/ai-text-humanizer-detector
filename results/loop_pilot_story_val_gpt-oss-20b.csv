@@ -1,0 +1,2 @@
+genre,strategy,model,n,ours_flagged_before,ours_flagged_after,external_flagged_before,external_flagged_after,rewrite_accepted,mean_rewrites_tried,mean_similarity_kept
+story,full,openai/gpt-oss-20b,10,0.9,0.9,1.0,0.9,1.0,2.7,0.9671505689620972

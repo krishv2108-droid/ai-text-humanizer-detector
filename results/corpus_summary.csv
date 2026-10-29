@@ -11,3 +11,9 @@ essay,train,0,1109,80.0
 essay,train,1,1109,179.0
 essay,val,0,227,70.0
 essay,val,1,227,170.0
+story,test,0,39,354.0
+story,test,1,39,333.0
+story,train,0,204,384.0
+story,train,1,204,375.5
+story,val,0,50,339.0
+story,val,1,50,319.5

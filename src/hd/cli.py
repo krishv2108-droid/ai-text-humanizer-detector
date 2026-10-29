@@ -57,9 +57,10 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--split", choices=["train", "val"], default="val", help="the test split is only used by the final evaluation")
     run.add_argument("--n", type=int, default=10, help="how many AI texts (a larger n extends the same sample)")
     run.add_argument("--strategy", choices=["naive", "craft", "feedback", "full"], default="full")
+    run.add_argument("--model", help="humanizer model (default: llm.humanizer_model); each Groq model has its own daily token pool")
     run.add_argument("--max-iterations", type=int, help="default: loop.max_iterations from the config")
     run.add_argument("--no-external", action="store_true", help="skip the independent detector (faster; fewer claims)")
-    run.add_argument("--out", help="JSONL log (default: data/processed/loop_<split>_<genre>_<strategy>.jsonl)")
+    run.add_argument("--out", help="JSONL log (default: data/processed/loop_<split>_<genre>_<strategy>_<model>.jsonl)")
     summ = loop_sub.add_parser("summary", help="detection rates before/after from a loop log")
     summ.add_argument("file", help="a JSONL log written by `hd loop run`")
 
@@ -288,7 +289,8 @@ def _run_loop(args: argparse.Namespace, cfg: dict) -> int:
     detector = Detector.load(cfg)
     profile = HumanProfile.load_or_build(cfg, detector.scorer)
     llm = cfg["llm"]
-    humanizer = Humanizer(make_client(cfg, resolve_path(cfg, "cache")), llm["humanizer_model"], profile, llm["humanizer_effort"])
+    model = args.model or llm["humanizer_model"]
+    humanizer = Humanizer(make_client(cfg, resolve_path(cfg, "cache")), model, profile, llm["humanizer_effort"])
     checker = checker_for(cfg, SentenceEmbedder(), detector.scorer, profile, args.genre)
     external, ext_cut = None, None
     if not args.no_external:
@@ -300,7 +302,8 @@ def _run_loop(args: argparse.Namespace, cfg: dict) -> int:
     items = select_items(pd.read_parquet(processed / "corpus.parquet"), args.split, args.genre, args.n, cfg["seed"])
     if items.empty:
         raise RuntimeError(f"no AI {args.genre} texts in the {args.split} split; generate/build them first")
-    out = Path(args.out) if args.out else processed / f"loop_{args.split}_{args.genre}_{args.strategy}.jsonl"
+    slug = model.split("/")[-1]
+    out = Path(args.out) if args.out else processed / f"loop_{args.split}_{args.genre}_{args.strategy}_{slug}.jsonl"
     max_iter = args.max_iterations or cfg["loop"]["max_iterations"]
 
     def run_one(item: dict):

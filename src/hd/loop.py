@@ -63,6 +63,7 @@ class LoopResult:
     steps: list[Step]
     final: int | None  # iteration kept, or None if no rewrite passed the guardrails
     stop_reason: str  # success | max_iterations | stalled | error: ...
+    humanizer_model: str = ""  # which LLM wrote the rewrites; results from different models must not be pooled
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -127,7 +128,8 @@ def run_loop(
         else:
             note = _retry_note(guard.flags)
 
-    return LoopResult(item_id, genre, strategy, our_cutoff, ext_cutoff, steps, choose_final(steps), stop)
+    return LoopResult(item_id, genre, strategy, our_cutoff, ext_cutoff, steps, choose_final(steps), stop,
+                      getattr(humanizer, "model", ""))  # fmt: skip
 
 
 def select_items(corpus: pd.DataFrame, split: str, genre: str, n: int, seed: int, *, unlock_test: bool = False,
@@ -173,12 +175,13 @@ def _after(rec: dict[str, Any], key: str) -> float | None:
 
 
 def summarize(records: list[dict[str, Any]]) -> pd.DataFrame:
-    """One row per (genre, strategy): detection rate before and after, per detector, plus acceptance."""
+    """One row per (genre, strategy, humanizer model): detection rate before and after, per detector, plus acceptance."""
     rows = []
-    frame = pd.DataFrame({"genre": [r["genre"] for r in records], "strategy": [r["strategy"] for r in records]})
-    for (genre, strategy), idx in frame.groupby(["genre", "strategy"]).groups.items():
+    frame = pd.DataFrame({"genre": [r["genre"] for r in records], "strategy": [r["strategy"] for r in records],
+                          "model": [r.get("humanizer_model", "") for r in records]})  # fmt: skip
+    for (genre, strategy, model), idx in frame.groupby(["genre", "strategy", "model"]).groups.items():
         recs = [records[i] for i in idx]
-        row: dict[str, Any] = {"genre": genre, "strategy": strategy, "n": len(recs)}
+        row: dict[str, Any] = {"genre": genre, "strategy": strategy, "model": model, "n": len(recs)}
         row["ours_flagged_before"] = sum(r["steps"][0]["ours"] > r["our_cutoff"] for r in recs) / len(recs)
         row["ours_flagged_after"] = sum(_after(r, "ours") > r["our_cutoff"] for r in recs) / len(recs)
         if all(r["ext_cutoff"] is not None and r["steps"][0]["external"] is not None for r in recs):
