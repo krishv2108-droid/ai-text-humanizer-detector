@@ -6,6 +6,7 @@ import json
 from dataclasses import dataclass, replace
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from hd.config import resolve_path
@@ -46,10 +47,26 @@ def compare_features(before: Analysis, after: Analysis, profile: HumanProfile, g
     return pd.DataFrame(rows)
 
 
+def human_fk_range(cfg: dict[str, Any], genre: str) -> tuple[float, float] | None:
+    """Reading-grade span of real human text in this genre, from TRAIN-split human texts only."""
+    path = resolve_path(cfg, "processed") / "corpus.parquet"
+    if not path.exists():
+        return None
+    from hd.humanizer.guardrails import readability
+
+    corpus = pd.read_parquet(path)
+    humans = corpus[(corpus["genre"] == genre) & (corpus["label"] == 0) & (corpus["split"] == "train")]
+    if humans.empty:
+        return None
+    lo_q, hi_q = cfg.get("guardrails", {}).get("fk_percentiles", [1, 99])
+    grades = [readability(t)["fk_grade"] for t in humans["text"]]
+    return float(np.percentile(grades, lo_q)), float(np.percentile(grades, hi_q))
+
+
 def checker_for(cfg: dict[str, Any], embedder, scorer, profile: HumanProfile, genre: str) -> GuardrailChecker:
     t = Thresholds.from_config(cfg)
     ceiling = profile.q(genre, "mean_surprisal", "p99")  # above nearly all real human text = looks incoherent
-    return GuardrailChecker(embedder, replace(t, max_mean_surprisal=ceiling), scorer=scorer)
+    return GuardrailChecker(embedder, replace(t, max_mean_surprisal=ceiling, fk_range=human_fk_range(cfg, genre)), scorer=scorer)
 
 
 def humanize_once(

@@ -237,3 +237,11 @@ def test_results_record_the_humanizer_model_and_summaries_keep_models_apart():
     b["humanizer_model"] = "other/model-2"
     table = summarize([a, b])
     assert sorted(table["model"]) == ["fake/model-1", "other/model-2"] and (table["n"] == 1).all()
+
+
+def test_select_items_can_be_limited_to_short_texts():
+    corpus = make_corpus()
+    corpus.loc[corpus["id"].isin(["ai1", "ai2", "ai3"]), "n_words"] = 900
+    short = select_items(corpus, "val", "story", 100, seed=1, max_words=400)
+    assert (short["n_words"] <= 400).all() and not short["id"].isin(["ai1", "ai2", "ai3"]).any()
+    assert len(select_items(corpus, "val", "story", 100, seed=1)) == len(short) + 3

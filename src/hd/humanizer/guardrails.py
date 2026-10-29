@@ -49,7 +49,10 @@ class Thresholds:
     max_invented_frac: float = 0.35  # share of rewrite sentences with no counterpart in the original
     invented_sim: float = 0.35  # a rewrite sentence below this similarity to every original sentence is "invented"
     length_ratio: tuple[float, float] = (0.7, 1.4)
-    max_fk_delta: float = 3.0  # allowed change in Flesch-Kincaid grade level
+    max_fk_delta: float = 3.0  # allowed change in Flesch-Kincaid grade level (only when fk_range is None)
+    # Allowed Flesch-Kincaid grade for the rewrite: the span of real human text in this genre. Preferred over the
+    # delta rule because humanizing LEGITIMATELY lowers reading level (AI stories read ~8 grades, human ~5).
+    fk_range: tuple[float, float] | None = None
     max_novel_rare_rate: float = 0.01  # share of words that are new AND rare (typo/gibberish signal)
     max_mean_surprisal: float | None = None  # GPT-2 ceiling for "incoherent"; set from human text
 
@@ -172,7 +175,10 @@ class GuardrailChecker:
             r.flags.append(f"invented content ({r.invented_frac:.0%} of sentences match nothing in the original)")
         if not t.length_ratio[0] <= ratio <= t.length_ratio[1]:
             r.flags.append(f"length changed too much ({ratio:.2f}x)")
-        if abs(r.fk_delta) > t.max_fk_delta:
+        if t.fk_range is not None:
+            if not t.fk_range[0] <= r.fk_grade_after <= t.fk_range[1]:
+                r.flags.append(f"reading level {r.fk_grade_after:.1f} outside the human range {t.fk_range[0]:.1f} to {t.fk_range[1]:.1f}")
+        elif abs(r.fk_delta) > t.max_fk_delta:
             r.flags.append(f"readability shifted ({r.fk_delta:+.1f} grade levels)")
         if rare > t.max_novel_rare_rate:
             r.flags.append(f"possible typos or gibberish ({rare:.1%} new rare words)")

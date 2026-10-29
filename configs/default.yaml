@@ -62,5 +62,9 @@ guardrails:
   invented_sim: 0.35         # rewrite sentence with no original sentence above this = invented
   max_invented_frac: 0.35
   length_ratio: [0.7, 1.4]   # the prompt asks for roughly the same length (+/-20%)
-  max_fk_delta: 3.0          # Flesch-Kincaid grade change
+  # Reading level: a rewrite must fall inside the span of real human text of its genre (these percentiles of
+  # TRAIN-split human texts). The old rule, "grade may not move more than 3", blocked legitimate humanizing
+  # (AI stories read at grade ~8, human ~5), so max_fk_delta is now only the fallback when no human data exists.
+  fk_percentiles: [1, 99]
+  max_fk_delta: 3.0
   max_novel_rare_rate: 0.01  # share of words that are both new and rare (typo/gibberish signal)

@@ -1,0 +1,3 @@
+reading_rule,genre,strategy,model,n,ours_flagged_before,ours_flagged_after,external_flagged_before,external_flagged_after,rewrite_accepted,mean_rewrites_tried,mean_similarity_kept
+human-range reading rule (current),story,full,qwen/qwen3.8-27b,10,0.9,0.0,1.0,0.6,1.0,2.0,0.863
+old delta reading rule (superseded),story,full,qwen/qwen3.8-27b,10,0.9,0.8,1.0,1.0,0.2,3.6,0.959

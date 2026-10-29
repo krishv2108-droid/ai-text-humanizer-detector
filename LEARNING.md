@@ -6,6 +6,9 @@ A running glossary. Terms are added as we meet them.
 
 - **Adversarial loop:** two systems pushing against each other. Here, a humanizer tries to make AI
   text look human while a detector tries to catch it. Each round, both can learn from the other.
+- **Goodhart's law (here: overfitting to the steering detector):** when a measure becomes the target, it stops
+  being a good measure. If the humanizer is steered by our detector's feedback, beating *our* detector says little;
+  the independent detector, never used to steer, is the honest check.
 - **Seed:** a number that fixes the "random" choices a program makes (shuffling data, initial
   weights) so rerunning gives the same results. Ours is 42 in `configs/default.yaml`.
 - **Held-out test set:** data the model never sees while training or tuning. It is the only honest
@@ -235,3 +238,29 @@ naive` against `--strategy full` on the same text.
 **1 experiment to try:** run `uv run hd llm check` and compare your account's per-minute token limit with the
 costs above. How many stories fit in a minute? In a day (check console.groq.com/settings/limits)? Then change
 `generation_model` to `llama-3.1-8b-instant` and see how the limits differ.
+
+
+---
+
+## Milestone 6: the adversarial loop
+
+**3 takeaways**
+1. **The detector you steer with is not the one you can believe.** With only our detector's feedback, one rewrite
+   left 20% of stories flagged by ours but 90% by the independent detector. The loop therefore never lets desklib
+   influence a decision; it is only recorded. (Pilot, n=10: wide uncertainty.)
+2. **A guardrail is a hypothesis too.** My reading-level rule rejected 8 of 10 real rewrites because I had assumed
+   "big change in reading level = damage", while human stories really are written at a much lower grade than AI
+   stories. Check a rule against the data it will judge, not only against synthetic failures; then say you changed it.
+3. **Evasion and fidelity pull against each other.** The technique list fooled both detectors but 90% of those
+   rewrites broke the guardrails; "sound human" alone kept the meaning and changed nothing. The useful number is
+   detection rate *among rewrites that keep the meaning*.
+
+**Also learned the hard way:** free tiers have several different caps (tokens per minute, tokens per day, and for
+some models output tokens per minute where the *requested maximum* counts, not the actual output). The daily
+token cap (200,000 per model) limits us to roughly 65 full-strategy rewrites a day, so experiment sizes follow the
+quota. Every result file records which model wrote the rewrites, and models are never pooled.
+
+**1 experiment to try:** run `uv run hd loop run --genre story --n 10 --max-words 400 --model qwen/qwen3.8-27b
+--strategy full`, then open the log (`data/processed/loop_val_story_full_*.jsonl`) and read the last kept rewrite
+of three stories next to their originals. Would you have guessed a human wrote them? What does your answer say about
+what our detector and desklib each pay attention to?

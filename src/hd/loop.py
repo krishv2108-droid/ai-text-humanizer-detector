@@ -47,6 +47,7 @@ class Step:
     flags: list[str] = field(default_factory=list)
     similarity: float | None = None
     length_ratio: float | None = None
+    fk_grade: float | None = None  # Flesch-Kincaid grade of this text (kept so other readability rules can be replayed)
     input_tokens: int = 0
     output_tokens: int = 0
     cached: bool = False
@@ -118,8 +119,9 @@ def run_loop(
         analysis = detector.analyze(rewrite.text)
         guard = checker.check(original, analysis.text)
         steps.append(Step(i, analysis.text, analysis.prob_ai, ext_score(analysis.text), guard.ok, list(guard.flags),
-                          guard.similarity, guard.length_ratio, rewrite.input_tokens, rewrite.output_tokens,
+                          guard.similarity, guard.length_ratio, guard.fk_grade_after, rewrite.input_tokens, rewrite.output_tokens,
                           rewrite.cached, note or ""))  # fmt: skip
+        steps[0].fk_grade = steps[0].fk_grade if steps[0].fk_grade is not None else guard.fk_grade_before
         if guard.ok:
             current, current_analysis, note = analysis.text, analysis, None
             if analysis.prob_ai <= our_cutoff:
@@ -133,10 +135,15 @@ def run_loop(
 
 
 def select_items(corpus: pd.DataFrame, split: str, genre: str, n: int, seed: int, *, unlock_test: bool = False,
-                 access_log: Path | None = None) -> pd.DataFrame:  # fmt: skip
-    """A deterministic sample of AI texts: same seed and n always give the same items, and a larger n extends it."""
+                 access_log: Path | None = None, max_words: int | None = None) -> pd.DataFrame:  # fmt: skip
+    """A deterministic sample of AI texts: same seed and n always give the same items, and a larger n extends it.
+
+    `max_words` restricts to shorter texts (some free-tier models cap output tokens per minute); results from a
+    restricted sample describe short texts only."""
     part = load_split(corpus, split, unlock_test=unlock_test, access_log=access_log)
     part = part[(part["label"] == 1) & (part["genre"] == genre) & part["has_pair"]].copy()
+    if max_words is not None:
+        part = part[part["n_words"] <= max_words]
     part["_order"] = [stable_hash01(seed, "loop", i) for i in part["id"]]
     return part.sort_values("_order").head(n).drop(columns="_order").reset_index(drop=True)
 

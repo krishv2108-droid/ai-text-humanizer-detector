@@ -5,12 +5,41 @@ human, and which linguistic features give AI text away?
 
 ## Results summary
 
-_Pending. Filled in at Milestone 7 once the evaluation has run._
+**These are pilot numbers, not the final result.** They come from 10 *validation* stories of at most 400
+words and one humanizer model (`qwen3.8-27b`), so every rate has a wide margin (with n=10, 60% could easily be
+30% or 90% on new data). The held-out test evaluation (M7) has not been run.
 
-| Text | Own detector (flagged as AI) | Independent detector (flagged as AI) |
-|------|------------------------------|--------------------------------------|
-| Raw AI text | - | - |
-| Humanized text | - | - |
+"Flagged" means above the cutoff that flags 5% of real human text, fixed in advance for each detector.
+Stories, validation split, the loop with the `full` prompt and guardrails on:
+
+| Text | Own detector (flagged as AI) | Independent detector, desklib (flagged as AI) |
+|------|------------------------------|-----------------------------------------------|
+| Raw AI stories | 90% | 100% |
+| After the loop | 0% | 60% |
+
+What the pilot suggests (each point needs the full evaluation before it is a finding):
+
+- **Optimizing against a detector transfers badly.** One rewrite steered only by our detector's feedback
+  (`feedback`) leaves 20% flagged by ours but 90% by desklib. Beating the detector that steers you is not evidence of
+  looking human.
+- **Evasion costs fidelity.** The `craft` technique list fooled both detectors on every story (0% flagged) but
+  only 10% of those rewrites passed the guardrails (meaning drift, reading level). The loop's accepted rewrites
+  keep a mean meaning-similarity of 0.86.
+- **"Make it sound human" alone does nothing** (`naive`: 100% still flagged, similarity 0.98).
+- **The winning style is a caricature.** The accepted rewrites are staccato and fragment-heavy ("Honking. Drone
+  hums."), the opposite extreme from the long, comma-heavy AI draft. A detector trained on such rewrites would
+  probably catch them; that retraining step is not built yet.
+- **The model matters.** The same loop with `gpt-oss-20b` (same family as the story generator) left detection
+  unchanged (ours 90% -> 90%, desklib 100% -> 90%) and stalled on 7 of 10 stories.
+
+First-pass comparison of prompt strategies (same 10 stories, `qwen3.8-27b`, before guardrails; `results/ablation_pilot_story_val_qwen_first_pass.csv`):
+
+| Strategy | Ours flagged | desklib flagged | Passes guardrails | Meaning similarity |
+|----------|--------------|-----------------|-------------------|--------------------|
+| naive | 100% | 100% | 100% | 0.98 |
+| feedback | 20% | 90% | 100% | 0.93 |
+| craft | 0% | 0% | 10% | 0.78 |
+| full | 0% | 30% | 40% | 0.81 |
 
 ## How it works
 
@@ -52,7 +81,7 @@ provider's rate-limit headers, and batch jobs stop cleanly at a daily limit and 
 ## Project status
 
 Built in small milestones, one commit each (see `git log`); per-milestone notes are in
-`LEARNING.md`. Current: **M5 - humanizer** (built and tested offline; real LLM rewrites not yet run, see below). AI stories still wait for an API key.
+`LEARNING.md`. Current: **M6 - adversarial loop** (built; first pilot on 10 validation stories, see the results summary). The 293 AI stories are generated. Next: M7 (full evaluation on the held-out test split, ablations, FINDINGS.md) and M8 (app). The free Groq tier allows only about 65 rewrites per model per day, which sets the size of the experiments.
 
 ## What gives AI text away? (preliminary, M2)
 
@@ -147,7 +176,7 @@ uv run hd humanize --file story.txt --dry-run     # shows the exact prompt; call
 uv run hd humanize --file story.txt --external    # rewrite + before/after scores + guardrails (needs a key)
 ```
 
-The humanizer asks an LLM (`llama-3.3-70b-versatile` on Groq's free tier by default) to rewrite AI text. The prompt is assembled from
+The humanizer asks an LLM (`openai/gpt-oss-120b` on Groq's free tier by default; `llama-3.3-70b-versatile` is no longer available to the key; use `--model` on `hd loop run` to choose another, e.g. `qwen/qwen3.8-27b`) to rewrite AI text. The prompt is assembled from
 blocks, so M7 can ablate them: **naive** (just "make it sound human"), **craft** (+ genre-specific writing
 techniques), **feedback** (+ what our detector found wrong with *this* draft) and **full** (all of it, plus
 the most machine-like sentences called out). The feedback compares the draft with real human text of the
@@ -179,8 +208,16 @@ How well do the guardrails work? Simulated failures on 150 real validation texts
 
 **Limitation:** the guardrails reliably catch wholesale drift and typos, but only partly catch *modest*
 content loss, and a rewrite that deletes sentences but keeps the length (padding elsewhere) would slip through. Sentences inside one story or answer are semantically close, so a missing sentence still has a
-near neighbour in the embedding space. False-positive rates on genuine paraphrases are unmeasured until real
-rewrites exist; thresholds in `configs/default.yaml` are provisional until then.
+near neighbour in the embedding space.
+
+**A guardrail changed after seeing real rewrites (disclosure).** The M5 reading-level rule ("the Flesch-Kincaid
+grade may not move more than 3 levels") was calibrated only on synthetic corruptions. On real qwen rewrites it
+rejected 8 of 10 stories, but AI stories read at grade ~8.3 and human stories at ~5.0, so lowering the grade is
+exactly what humanizing does. It now requires the rewrite's grade to fall inside the range of real human text for
+the genre (1st-99th percentile of *train-split* human texts; story: 2.2 to 11.0). With the old rule the same loop
+ended with ours 80% / desklib 100% flagged and 20% of rewrites accepted (log kept as `..._fkdelta-rule.jsonl`).
+The change was motivated by the pilot, so the final evaluation reports results under both rules. False-positive
+rates of the other thresholds on genuine rewrites are still only partly measured.
 
 ## Data
 

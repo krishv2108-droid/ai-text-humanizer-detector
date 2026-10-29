@@ -222,6 +222,38 @@ def test_readability_shift_is_flagged():
     assert any(f.startswith("readability shifted") for f in r.flags)
 
 
+def test_reading_level_rule_uses_the_human_range_not_the_change():
+    plain = "The cat sat on the mat. The dog ran. It was fun. We all went home. Then we ate."
+    dense = ("Notwithstanding considerable epistemological uncertainty, the aforementioned quadruped relinquished "
+             "its horizontal position, whereupon institutional stakeholders deliberated extensively regarding ramifications.")  # fmt: skip
+    loose = dict(min_doc_similarity=-1, max_dropped_frac=1, max_invented_frac=1, length_ratio=(0, 99))
+    g_plain, g_dense = readability(plain)["fk_grade"], readability(dense)["fk_grade"]
+    # Dense -> plain is a huge drop, but plain text lies inside the human range, so it is NOT flagged...
+    inside = checker(**loose, fk_range=(g_plain - 1, g_dense + 1)).check(dense, plain)
+    assert not any("reading" in f or "readability" in f for f in inside.flags)
+    # ...while a rewrite that leaves the human range is flagged, even with a tiny change.
+    outside = checker(**loose, fk_range=(g_plain - 1, g_plain + 1)).check(plain, dense)
+    assert any(f.startswith("reading level") and "outside the human range" in f for f in outside.flags)
+
+
+def test_human_fk_range_comes_from_train_split_human_text_only(tmp_path, monkeypatch):
+    from hd.humanizer.pipeline import human_fk_range
+
+    easy, hard = "The cat sat. The dog ran. It was fun.", ("Notwithstanding considerable epistemological uncertainty, "
+                  "institutional stakeholders deliberated extensively regarding ramifications.")  # fmt: skip
+    rows = [{"genre": "story", "label": 0, "split": "train", "text": easy}] * 5
+    rows += [{"genre": "story", "label": 1, "split": "train", "text": hard}] * 5  # AI side must not widen the range
+    rows += [{"genre": "story", "label": 0, "split": "val", "text": hard}] * 5  # neither may validation text
+    rows += [{"genre": "essay", "label": 0, "split": "train", "text": hard}] * 5  # nor another genre
+    (tmp_path / "data" / "processed").mkdir(parents=True)
+    pd.DataFrame(rows).to_parquet(tmp_path / "data" / "processed" / "corpus.parquet")
+    monkeypatch.setattr("hd.config.PROJECT_ROOT", tmp_path)  # resolve_path is relative to the project root
+    cfg = {"paths": {"processed": "data/processed"}}
+    lo, hi = human_fk_range(cfg, "story")
+    assert lo == pytest.approx(readability(easy)["fk_grade"]) and hi == pytest.approx(lo)
+    assert human_fk_range(cfg, "casual") is None
+
+
 def test_inject_typos_is_deterministic_and_respects_rate():
     a, b = inject_typos(STORY, 0.5, random.Random(1)), inject_typos(STORY, 0.5, random.Random(1))
     assert a == b and inject_typos(STORY, 0.0, random.Random(1)) == STORY

@@ -58,6 +58,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--n", type=int, default=10, help="how many AI texts (a larger n extends the same sample)")
     run.add_argument("--strategy", choices=["naive", "craft", "feedback", "full"], default="full")
     run.add_argument("--model", help="humanizer model (default: llm.humanizer_model); each Groq model has its own daily token pool")
+    run.add_argument("--max-words", type=int, help="only texts up to this many words (needed for models with small output caps)")
     run.add_argument("--max-iterations", type=int, help="default: loop.max_iterations from the config")
     run.add_argument("--no-external", action="store_true", help="skip the independent detector (faster; fewer claims)")
     run.add_argument("--out", help="JSONL log (default: data/processed/loop_<split>_<genre>_<strategy>_<model>.jsonl)")
@@ -299,11 +300,13 @@ def _run_loop(args: argparse.Namespace, cfg: dict) -> int:
         external, ext_cut = DesklibDetector(), cutoff_for(thresholds, "external", args.genre)
 
     processed = resolve_path(cfg, "processed")
-    items = select_items(pd.read_parquet(processed / "corpus.parquet"), args.split, args.genre, args.n, cfg["seed"])
+    items = select_items(pd.read_parquet(processed / "corpus.parquet"), args.split, args.genre, args.n, cfg["seed"],
+                         max_words=args.max_words)
     if items.empty:
         raise RuntimeError(f"no AI {args.genre} texts in the {args.split} split; generate/build them first")
     slug = model.split("/")[-1]
-    out = Path(args.out) if args.out else processed / f"loop_{args.split}_{args.genre}_{args.strategy}_{slug}.jsonl"
+    short = f"_le{args.max_words}w" if args.max_words else ""
+    out = Path(args.out) if args.out else processed / f"loop_{args.split}_{args.genre}_{args.strategy}_{slug}{short}.jsonl"
     max_iter = args.max_iterations or cfg["loop"]["max_iterations"]
 
     def run_one(item: dict):

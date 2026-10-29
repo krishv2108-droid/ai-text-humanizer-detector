@@ -86,7 +86,7 @@ class Humanizer:
         system, user = self.build_request(draft, genre, strategy, analysis, original, retry_note)
         words = len(draft.split())
         resp = self.client.complete(system=system, prompt=user, model=self.model,
-                                    max_tokens=min(6000, int(words * 2.5) + 400), effort=self.effort)  # fmt: skip
+                                    max_tokens=min(6000, int(words * 1.8) + 100), effort=self.effort)  # fmt: skip
         if resp.stop_reason == "max_tokens":
             raise RuntimeError("the rewrite was cut off at the token limit; try again or shorten the text")
         text, warnings = clean_output(resp.text, draft)
