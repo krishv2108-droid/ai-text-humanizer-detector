@@ -314,3 +314,27 @@ while installing Streamlit and restored it from uv's local cache (no download). 
 **1 experiment to try:** in the Humanize tab, run the same paragraph with strategy `naive` and then `full`. Before you click,
 guess which one our detector will flag. Then tick "Also score with the independent detector" and see whether the two
 detectors agree on each rewrite.
+
+
+---
+
+## Making the humanizer work: what the evidence said
+
+**3 takeaways**
+1. **Run the trivial control before believing a win.** Changing only punctuation (no word touched) took our detector from 100% to
+   18% flagged, while desklib stayed at 90%. Our detector's "win" was mostly surface formatting. A control that costs no LLM calls
+   and takes minutes exposed what weeks of prompt tuning could not.
+2. **Test the explanation before building on it.** I was sure the content check punished sentences split into fragments, and built
+   a span-matching fix. A controlled experiment (content-preserving splits and merges versus real deletions) showed the original
+   check was fine and the fix useless. Measure, then change; delete what the measurement refutes.
+3. **A trade-off is a result, not a bug.** Desklib's score tracks how much of the story survives a rewrite (Spearman 0.73), so
+   "fools the detector" and "keeps the meaning" pull against each other. The honest deliverable is the curve and an explicit
+   operating point, not one number from one setting.
+
+**Also learned:** keep a detector's two jobs separate. A detector that steers a loop can no longer judge it, so a third detector
+(fakespot) only ever judges, and a test proves that changing its scores cannot change a decision. And small samples hide
+differences: 12 stories cannot tell v1 from v2, which is why the logs record every setting and the reports show intervals.
+
+**1 experiment to try:** take an AI paragraph, split every sentence at its commas by hand (or with
+`hd.humanizer.calibrate.split_into_fragments`), and run `uv run hd detect` and `uv run hd detect --external` on both versions.
+Which detector moves? What does that say about what each one measures?

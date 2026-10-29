@@ -13,8 +13,8 @@ answers (HC3 ELI5) at lighter depth. Email is not covered (no clean paired datas
 ## What was built
 
 A feature-based detector (sentence rhythm, vocabulary, punctuation, part-of-speech shares, GPT-2 predictability) with
-per-sentence explanations; an independent open-source detector (`desklib`) that no part of our pipeline trains or
-steers; an LLM humanizer whose prompt can use the detector's findings; guardrails (meaning similarity, dropped/invented
+per-sentence explanations; two independent open-source detectors that no part of our pipeline trains: `desklib` (can optionally
+steer the loop) and `fakespot` (a RoBERTa-base classifier that only ever judges, and decides nothing); an LLM humanizer whose prompt can use the detector's findings; guardrails (meaning similarity, dropped/invented
 content, length, reading level, typo/gibberish rate); and an adversarial loop that rewrites, re-scores and repeats.
 Both detectors are always reported separately, at a cutoff that flags 5% of real human text (chosen once on
 validation human text, then frozen).
@@ -31,6 +31,12 @@ Detection quality on validation text (cutoff = 5% of human text flagged; stories
 
 These are very high because the task is easy in this setup (see Limitations): one AI generator per genre, one human
 source per genre.
+
+**Third detector (`fakespot-ai/roberta-base-ai-text-detection-v1`, Apache-2.0, 503 MB).** Added as a judge so that desklib can steer
+without losing every independent check. Validation split, frozen 5%-false-positive cutoffs: AUC story 0.995 (n=100), essay 0.999,
+casual 0.999; AI caught 98% / 99.6% / 100%. Rank correlation between detectors on validation texts: ours-desklib 0.82, ours-fakespot
+0.85, desklib-fakespot 0.89, so the three are related, not three independent votes. Its scores are saturated (the story cutoff is
+0.996) and its training data is documented only in a separate technical report, so overlap with our sources is not ruled out.
 
 **Feature-group ablation** (`results/ablation_feature_groups.csv`, prompt-grouped 5-fold CV on train+val, a model per genre).
 "Drop" removes a group; "only" uses just that group. Many groups carry overlapping information, so a small drop does
@@ -64,6 +70,14 @@ cutoffs frozen at 5% false positives, 95% Wilson intervals (`results/loop_report
 
 Replaying the v2 fact guard over those kept rewrites: 10 of 34 (29%, 17-46%), and 4 of the 32 kept rewrites had lost a number or
 a name that the old guardrails did not check. (The earlier 10-story pilot reported desklib 60% flagged; the larger sample says 68%.)
+
+**Third detector on the same 34 validation stories (scored after the fact; it steered nothing).** The kept v1 rewrites fool
+fakespot on **44% (29-61%)** of stories, versus 32% for desklib; all three detectors at once: **8 of 34 = 24% (12-40%)**. Evasion
+transfers: of 40 rewrites that fool desklib, 80% also fool fakespot, while of 59 that desklib still flags, 36% fool fakespot
+(Spearman 0.70 between the two on 99 rewrites). That transfer is the reason steering with desklib is a sound design, judged by
+fakespot. `--steer-desklib` is implemented and tested (the loop stops only when both ours and desklib pass, keeps the rewrite with the
+lowest worst-case score, and tells a rewrite desklib still flags to be bolder; fakespot never decides anything), but **it has not been
+measured**: the free qwen quota ran out after 3 steered stories, which is not evidence either way.
 
 **Why it plateaus: fidelity versus evasion** (`results/frontier_story_replay_v1_v2dev.csv`; 100 rewrites with desklib scores):
 
@@ -118,6 +132,8 @@ motivated by this pilot, the final evaluation must report both rules.
   one open-weights model with a plain prompt. High AUCs show that these specific generators are easy to separate from these
   specific human sources, not that AI text in general is. No out-of-distribution test (other LLMs, other prompts, other
   human writers) was run.
+- **Three detectors are not three independent votes.** They agree on rank order (r = 0.82-0.89) and share the same blind spot of
+  being trained on text of known LLMs. If desklib steers, fakespot is the only detector left that is both independent and unsteered.
 - **"Independent" means not trained or steered by us.** Desklib's own training data may overlap the sources we use; I did not
   verify that. Its calibration is poor at 0.5 (it flags ~24% of human validation text), so all comparisons use matched 5%
   false-positive cutoffs.
@@ -136,7 +152,7 @@ motivated by this pilot, the final evaluation must report both rules.
   the same as passing for human.
 - **Compute shaped the design.** The free Groq tier allows about 65 rewrites per model per day, so sample sizes are small and
   two humanizer models (with different results) were used.
-- **Not tested:** commercial detectors (see `reports/manual_detector_log.md`), adversarial retraining of the detector on fooling
+- **Not tested:** desklib steering at scale, commercial detectors (see `reports/manual_detector_log.md`), adversarial retraining of the detector on fooling
   rewrites, essay and casual humanizing at all.
 - **Dual use.** A tool that makes AI text harder to detect can be used to misrepresent authorship. This is a measurement study;
   note also that even a good detector flags some human writing (5% here by construction), which matters when detectors are used
@@ -152,7 +168,8 @@ The test split (15% of prompts, never used for training, tuning or threshold sel
 - reports per genre, per detector: AUC, AI caught, human flagged (each with intervals), plus the loop outcome tables for any
   test-split loop logs (`hd loop run --split test --unlock-test`, also logged).
 
-Decisions already fixed before looking at test data: the humanizer model (`qwen3.8-27b`, the only one that rewrites enough), the
+Decisions already fixed before looking at test data: both steering modes are reported (ours only; ours + desklib) with fakespot as the
+judge in both; the humanizer model (`qwen3.8-27b`, the only one that rewrites enough), the
 `full` strategy with prompt v2 and repair on (prompt v1 is reported as the baseline), the guardrail rule (reported under both
 reading-level rules), and that results from different humanizer models or prompt versions are reported separately and never pooled. When it runs, this section gets replaced with the actual numbers, including any
 that disappoint.

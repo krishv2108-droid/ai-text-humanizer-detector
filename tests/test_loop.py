@@ -286,3 +286,62 @@ def test_select_items_can_be_limited_to_short_texts():
     short = select_items(corpus, "val", "story", 100, seed=1, max_words=400)
     assert (short["n_words"] <= 400).all() and not short["id"].isin(["ai1", "ai2", "ai3"]).any()
     assert len(select_items(corpus, "val", "story", 100, seed=1)) == len(short) + 3
+
+
+# ---- the judge (third detector) and optional desklib steering ----------------------------------------------------
+
+
+def go3(probs, outputs, ext, judge=None, steer=False, max_iterations=4):
+    humanizer, checker = FakeHumanizer(outputs), FakeChecker()
+    result = run_loop(FakeDetector(probs), humanizer, checker, "orig", "story", strategy="full", our_cutoff=CUT, ext_cutoff=0.7,
+                      external=FakeExternal(ext), max_iterations=max_iterations, item_id="x", judge=FakeExternal(judge) if judge else None,
+                      judge_cutoff=0.5 if judge else None, steer_external=steer)  # fmt: skip
+    return result, humanizer
+
+
+EXT = {"orig": 0.99, "r1": 0.95, "r2": 0.40, "r3": 0.10}
+
+
+def test_the_judge_is_recorded_at_every_step_and_never_decides_anything():
+    probs = {"orig": 0.9, "r1": 0.1, "r2": 0.05}
+    low = {"orig": 0.9, "r1": 0.1, "r2": 0.1}
+    high = {"orig": 0.1, "r1": 0.99, "r2": 0.99}  # opposite stories about the judge
+    a, _ = go3(probs, ["r1", "r2"], EXT, judge=low)
+    b, _ = go3(probs, ["r1", "r2"], EXT, judge=high)
+    assert [s.judge for s in a.steps] == [0.9, 0.1] and [s.judge for s in b.steps] == [0.1, 0.99]
+    assert (a.final, a.stop_reason, len(a.steps)) == (b.final, b.stop_reason, len(b.steps))  # decisions identical whatever the judge says
+    assert a.judge_cutoff == 0.5 and a.steer == ["ours"]
+    none, _ = go3(probs, ["r1", "r2"], EXT)
+    assert all(s.judge is None for s in none.steps) and none.judge_cutoff is None
+
+
+def test_steering_stops_at_the_first_rewrite_that_satisfies_both_and_pushes_when_desklib_still_flags():
+    from hd.loop import STEER_NOTE
+
+    ext = {"orig": 0.99, "r1": 0.95, "r2": 0.30}
+    result, humanizer = go3({"orig": 0.9, "r1": 0.1, "r2": 0.1}, ["r1", "r2"], ext, steer=True)
+    assert result.stop_reason == "success" and result.final == 2 and [s.iteration for s in result.steps] == [0, 1, 2]
+    assert humanizer.calls[1]["retry_note"] == STEER_NOTE  # r1 was faithful and fooled ours, but desklib still flagged it
+    assert humanizer.calls[1]["draft"] == "r1"  # push further FROM the accepted rewrite
+    assert result.steer == ["ours", "external"]
+    plain, plain_h = go3({"orig": 0.9, "r1": 0.1, "r2": 0.1}, ["r1", "r2"], ext, steer=False)
+    assert plain.final == 1 and plain.stop_reason == "success" and len(plain_h.calls) == 1  # without steering r1 would have ended it
+
+
+def test_steering_keeps_the_rewrite_with_the_lowest_worst_case_score():
+    ext = {"orig": 0.99, "r1": 0.95, "r2": 0.90, "r3": 0.85}  # desklib never relents
+    probs = {"orig": 0.9, "r1": 0.05, "r2": 0.25, "r3": 0.28}
+    result, _ = go3(probs, ["r1", "r2", "r3"], ext, steer=True, max_iterations=3)
+    assert result.stop_reason == "max_iterations"
+    ratios = [max(p / CUT, e / 0.7) for p, e in ((0.05, 0.95), (0.25, 0.90), (0.28, 0.85))]
+    assert result.final == 1 + ratios.index(min(ratios))  # chosen by the worse of the two detectors, relative to each cutoff
+    assert result.final == 3 and go3(probs, ["r1", "r2", "r3"], ext, steer=False, max_iterations=3)[0].final == 1  # ours alone prefers r1
+
+
+def test_steering_needs_the_independent_detector_and_its_cutoff():
+    with pytest.raises(ValueError, match="independent detector"):
+        run_loop(FakeDetector({"orig": 0.9}), FakeHumanizer(["r1"]), FakeChecker(), "orig", "story", our_cutoff=CUT, steer_external=True)
+    steps = [Step(0, "o", 0.9, 0.9), Step(1, "a", 0.1, None, True)]
+    with pytest.raises(ValueError, match="both cutoffs"):
+        choose_final(steps, CUT, 0.7, steer_external=True)
+    assert choose_final(steps) == 1  # without steering a missing desklib score is irrelevant

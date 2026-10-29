@@ -55,9 +55,22 @@ def run_external_eval(cfg: dict[str, Any]) -> pd.DataFrame:
         val = val.assign(external=ext.predict_proba(val["text"].tolist()))
     val[["id", "genre", "label", "ours", "external"]].to_parquet(cache, index=False)
 
+    # third detector (a different architecture and training set again): scored separately and cached on its own
+    cache3 = processed / "third_val_scores.parquet"
+    cached3 = pd.read_parquet(cache3) if cache3.exists() else None
+    if cached3 is not None and set(val["id"]) <= set(cached3["id"]):
+        val = val.merge(cached3[["id", "third"]], on="id")
+    else:
+        from hd.detector.external import FakespotDetector
+
+        third = FakespotDetector()
+        print(f"scoring {len(val)} validation texts with {third.name} on {third.device}")
+        val = val.assign(third=third.predict_proba(val["text"].tolist()))
+    val[["id", "third"]].to_parquet(cache3, index=False)
+
     # 5%-false-positive cutoffs, chosen on validation HUMAN texts per genre; later evaluations on
     # unseen data reuse these frozen numbers (so their false-positive rate there is an honest result).
-    names = {"ours": "ours (gbm_full)", "external": "desklib"}
+    names = {"ours": "ours (gbm_full)", "external": "desklib", "third": "fakespot"}
     thresholds = {n: {genre: threshold_at_fpr(g.loc[g["label"] == 0, n], TARGET_FPR) for genre, g in val.groupby("genre")} for n in names}
     for n in names:
         thresholds[n]["all"] = threshold_at_fpr(val.loc[val["label"] == 0, n], TARGET_FPR)
@@ -70,11 +83,14 @@ def run_external_eval(cfg: dict[str, Any]) -> pd.DataFrame:
     out = pd.DataFrame(rows)
     out.round(4).to_csv(results / "external_metrics.csv", index=False)
     print(out.round(3).to_string(index=False))
-    print("score correlation (Spearman) ours vs external:", round(val["ours"].corr(val["external"], method="spearman"), 3))
+    corr = val[["ours", "external", "third"]].corr(method="spearman")
+    print("score correlation (Spearman): ours-desklib", round(corr.loc["ours", "external"], 3), "| ours-fakespot", round(corr.loc["ours", "third"], 3),
+          "| desklib-fakespot", round(corr.loc["external", "third"], 3))
 
     from hd.eval.detector_plots import plot_score_distributions
 
     figures = results / "figures"
     figures.mkdir(exist_ok=True)
     plot_score_distributions(val, "external", figures / "external_scores.png", "Independent detector (desklib): score by true label, validation split")
+    plot_score_distributions(val, "third", figures / "third_scores.png", "Third detector (fakespot): score by true label, validation split")
     return out

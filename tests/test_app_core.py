@@ -34,7 +34,9 @@ def test_verdict_is_strictly_above_the_cutoff_and_handles_missing_values():
 
 def test_cutoffs_come_from_the_frozen_file_and_never_default():
     res = Resources({}, None, None, None, THRESHOLDS)
-    assert cutoffs_for(res, "story") == {"ours": 0.2, "external": 0.7}
+    assert cutoffs_for(res, "story") == {"ours": 0.2, "external": 0.7, "judge": None}  # no third detector calibrated yet
+    with_third = Resources({}, None, None, None, THRESHOLDS | {"third": {"story": 0.9, "all": 0.9}})
+    assert cutoffs_for(with_third, "story")["judge"] == 0.9
     with pytest.raises(RuntimeError, match="casual"):
         cutoffs_for(res, "casual")  # no silent 0.5 or borrowed genre
     assert cutoffs_for(Resources({}, None, None, None, {"ours": {"story": 0.2}}), "story")["external"] is None
@@ -149,3 +151,26 @@ def test_outcome_text_never_presents_a_failed_rewrite_as_a_success(patched):
     ok.final, ok.steps[1].guardrails_ok, ok.steps[1].flags = None, False, ["meaning drift (similarity 0.50 < 0.8)"]
     assert "unchanged" in outcome_text(ok) and "success" not in outcome_text(ok).lower()
     assert "meaning drift" in steps_frame(ok)["why not"][1]
+
+
+def test_humanize_text_can_let_desklib_steer_and_records_the_judge_without_letting_it_decide(patched):
+    class Judge:
+        def predict_proba(self, texts):
+            return [0.99 if t == "orig" else 0.05 for t in texts]
+
+    thresholds = THRESHOLDS | {"third": {"story": 0.5}}
+    res = Resources({}, FakeDetector(), object(), object(), thresholds, FakeExternal(), Judge())
+    steered = humanize_text(res, object(), "orig", "story", strategy="full", model="m", max_rewrites=2, use_external=True, steer_desklib=True, use_judge=True)
+    assert steered.steer == ["ours", "external"] and steered.judge_cutoff == 0.5 and [s.judge for s in steered.steps] == [0.99, 0.05]
+    plain = humanize_text(res, object(), "orig", "story", strategy="full", model="m", max_rewrites=2, use_external=True)
+    assert plain.steer == ["ours"] and all(s.judge is None for s in plain.steps)  # off unless asked for
+    assert steps_frame(steered)["fakespot P(AI)"].tolist() == [0.99, 0.05]
+    assert steps_frame(plain)["fakespot P(AI)"].isna().all()  # the column exists but is empty when no judge ran
+
+
+def test_humanize_text_refuses_steering_or_judging_without_the_detector_loaded(patched):
+    res = Resources({}, FakeDetector(), object(), object(), THRESHOLDS | {"third": {"story": 0.5}}, None, None)
+    with pytest.raises(RuntimeError, match="not loaded"):
+        humanize_text(res, object(), "orig", "story", strategy="full", model="m", max_rewrites=1, use_external=False, steer_desklib=True)
+    with pytest.raises(RuntimeError, match="third detector"):
+        humanize_text(res, object(), "orig", "story", strategy="full", model="m", max_rewrites=1, use_external=False, use_judge=True)

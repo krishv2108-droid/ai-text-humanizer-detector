@@ -63,6 +63,8 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--max-words", type=int, help="only texts up to this many words (needed for models with small output caps)")
     run.add_argument("--max-iterations", type=int, help="default: loop.max_iterations from the config")
     run.add_argument("--no-external", action="store_true", help="skip the independent detector (faster; fewer claims)")
+    run.add_argument("--steer-desklib", action="store_true", help="let desklib steer too: stop only when both detectors pass and keep the best worst-case rewrite (fakespot, the judge, never steers)")
+    run.add_argument("--no-judge", action="store_true", help="skip the third detector (fakespot), which is only ever a judge")
     run.add_argument("--no-repair", action="store_true", help="v1 behaviour: after a rejected rewrite restart from the last accepted draft with a generic note")
     run.add_argument("--tag", default="", help="suffix for the log file name (e.g. v2), so runs with different settings never share a file")
     run.add_argument("--out", help="JSONL log (default: data/processed/loop_<split>_<genre>_<strategy>_<model>.jsonl)")
@@ -347,6 +349,13 @@ def _run_loop(args: argparse.Namespace, cfg: dict) -> int:
         from hd.detector.external import DesklibDetector
 
         external, ext_cut = DesklibDetector(), cutoff_for(thresholds, "external", args.genre)
+    if args.steer_desklib and external is None:
+        raise RuntimeError("--steer-desklib needs desklib: drop --no-external")
+    judge, judge_cut = None, None
+    if not args.no_judge and "third" in thresholds:
+        from hd.detector.external import FakespotDetector
+
+        judge, judge_cut = FakespotDetector(), cutoff_for(thresholds, "third", args.genre)
 
     processed = resolve_path(cfg, "processed")
     on_test = args.split == "test"
@@ -365,7 +374,7 @@ def _run_loop(args: argparse.Namespace, cfg: dict) -> int:
         print(f"  {item['id']}: {item['n_words']} words ...", flush=True)
         return run_loop(detector, humanizer, checker, item["text"], args.genre, strategy=args.strategy, our_cutoff=our_cut,
                         ext_cutoff=ext_cut, external=external, max_iterations=max_iter, item_id=item["id"],
-                        repair=not args.no_repair)  # fmt: skip
+                        repair=not args.no_repair, judge=judge, judge_cutoff=judge_cut, steer_external=args.steer_desklib)  # fmt: skip
 
     stats = run_batch(items.to_dict("records"), out, run_one)
     print({k: v for k, v in stats.items() if k != "message"})

@@ -28,7 +28,7 @@ def app(monkeypatch):
     monkeypatch.setattr("hd.config.load_env", lambda *a, **k: False)  # never read the real .env in tests
     monkeypatch.delenv("GROQ_API_KEY", raising=False)
     fake = Resources(load_config(), FakeDetector(), make_profile(), None, THRESHOLDS, None)
-    monkeypatch.setattr(app_core, "load_resources", lambda cfg, with_external=False: fake)
+    monkeypatch.setattr(app_core, "load_resources", lambda cfg, with_external=False, with_judge=False: fake)
     at = AppTest.from_file(str(PROJECT_ROOT / "app" / "app.py"), default_timeout=60)
     at.run()
     assert not at.exception

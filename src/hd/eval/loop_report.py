@@ -24,8 +24,9 @@ import pandas as pd
 
 from hd.eval.style import AI_C, AXIS, GRID, HUMAN_C, INK, INK2, MUTED, SERIES, SURFACE, style_axes
 
-# detector label -> (score key in a step, cutoff key in a record)
-DETECTORS = {"ours": ("ours", "our_cutoff"), "desklib": ("external", "ext_cutoff")}
+# detector label -> (score key in a step, cutoff key in a record). fakespot is the JUDGE: it never steers anything.
+DETECTORS = {"ours": ("ours", "our_cutoff"), "desklib": ("external", "ext_cutoff"), "fakespot": ("judge", "judge_cutoff")}
+STEER_KEY = {"ours": "ours", "desklib": "external", "fakespot": "judge"}  # name used in a record's `steer` list
 POLICIES = ("kept", "unguarded")
 
 
@@ -52,7 +53,7 @@ def outcome_step(rec: dict[str, Any], policy: str = "kept") -> dict[str, Any]:
 
 def _flagged(rec: dict[str, Any], step: dict[str, Any], detector: str) -> bool | None:
     score_key, cut_key = DETECTORS[detector]
-    if step[score_key] is None or rec[cut_key] is None:
+    if step.get(score_key) is None or rec.get(cut_key) is None:  # logs from before a detector existed simply lack the field
         return None
     return bool(step[score_key] > rec[cut_key])  # flagged = strictly above the frozen cutoff
 
@@ -61,9 +62,10 @@ def outcome_table(records: list[dict[str, Any]], policy: str = "kept") -> pd.Dat
     """One row per (genre, strategy, humanizer model, detector): flagged rate before and after, with intervals."""
     frame = pd.DataFrame({"genre": [r["genre"] for r in records], "strategy": [r["strategy"] for r in records],
                           "model": [r.get("humanizer_model", "") for r in records],
-                          "prompt": [r.get("prompt_version", "v1") for r in records]})  # fmt: skip
+                          "prompt": [r.get("prompt_version", "v1") for r in records],
+                          "steer": ["+".join(r.get("steer", ["ours"])) for r in records]})  # fmt: skip
     rows = []
-    for (genre, strategy, model, prompt), idx in frame.groupby(["genre", "strategy", "model", "prompt"]).groups.items():
+    for (genre, strategy, model, prompt, steer), idx in frame.groupby(["genre", "strategy", "model", "prompt", "steer"]).groups.items():
         recs = [records[i] for i in idx]
         for det in DETECTORS:
             pairs = [(_flagged(r, r["steps"][0], det), _flagged(r, outcome_step(r, policy), det)) for r in recs]
@@ -74,7 +76,8 @@ def outcome_table(records: list[dict[str, Any]], policy: str = "kept") -> pd.Dat
             detected = [(b, a) for b, a in pairs if b]
             kept = [r["steps"][r["final"]] for r in recs if r["final"] is not None]
             rows.append({
-                "genre": genre, "strategy": strategy, "model": model, "prompt": prompt, "policy": policy, "detector": det, "n": n,
+                "genre": genre, "strategy": strategy, "model": model, "prompt": prompt, "steer": steer, "policy": policy, "detector": det,
+                "steers": STEER_KEY[det] in steer.split("+"), "n": n,
                 "flagged_before": kb / n, "before_lo": wilson_ci(kb, n)[0], "before_hi": wilson_ci(kb, n)[1],
                 "flagged_after": ka / n, "after_lo": wilson_ci(ka, n)[0], "after_hi": wilson_ci(ka, n)[1],
                 "n_detected_before": len(detected),
@@ -85,20 +88,22 @@ def outcome_table(records: list[dict[str, Any]], policy: str = "kept") -> pd.Dat
     return pd.DataFrame(rows)
 
 
-def joint_success(records: list[dict[str, Any]], policy: str = "kept", extra_ok: Callable[[dict[str, Any], dict[str, Any]], bool] | None = None) -> dict[str, Any]:
+def joint_success(records: list[dict[str, Any]], policy: str = "kept", extra_ok: Callable[[dict[str, Any], dict[str, Any]], bool] | None = None,
+                  detectors: tuple[str, ...] = ("ours", "desklib")) -> dict[str, Any]:  # fmt: skip
     """The headline 'working humanizer' rate: the text a user gets passes the guardrails AND neither detector flags it.
 
     Under policy 'kept' a failed rewrite means the user keeps the original, which is flagged, so it never counts.
     `extra_ok(record, step)` adds a further requirement on the step (e.g. a newer check replayed on old logs).
-    Records without the independent detector are skipped (the claim needs both).
+    `detectors` says which must all be fooled (default ours + desklib; add "fakespot" for the three-detector claim).
+    Records lacking any of those detectors are skipped (the claim needs all of them).
     """
-    usable = [r for r in records if all(r["steps"][0][k] is not None for k in ("ours", "external")) and r["ext_cutoff"] is not None]
+    usable = [r for r in records if all(_flagged(r, r["steps"][0], d) is not None for d in detectors)]
     wins = 0
     for r in usable:
         step = outcome_step(r, policy)
         if step is r["steps"][0]:
             continue
-        if step["ours"] <= r["our_cutoff"] and step["external"] <= r["ext_cutoff"] and (extra_ok is None or extra_ok(r, step)):
+        if all(_flagged(r, step, d) is False for d in detectors) and (extra_ok is None or extra_ok(r, step)):
             wins += 1
     lo, hi = wilson_ci(wins, len(usable))
     return {"n": len(usable), "fooled_both": wins, "rate": wins / len(usable) if usable else math.nan, "lo": lo, "hi": hi}
@@ -119,7 +124,7 @@ def first_pass_table(by_strategy: dict[str, list[dict[str, Any]]]) -> pd.DataFra
         versions = sorted({r.get("prompt_version", "v1") for r, _ in firsts})
         row: dict[str, Any] = {"strategy": strategy, "prompt": "+".join(versions), "n": n}
         for det, (score_key, cut_key) in DETECTORS.items():
-            if any(s[score_key] is None or r[cut_key] is None for r, s in firsts):
+            if any(s.get(score_key) is None or r.get(cut_key) is None for r, s in firsts):
                 continue
             k = sum(s[score_key] > r[cut_key] for r, s in firsts)
             row[f"{det}_flagged"] = k / n
@@ -194,7 +199,9 @@ def plot_before_after(table: pd.DataFrame, path: Path, title: str, subtitle: str
         ax.set_xticks(x, labels, fontsize=8, color=INK2)
         ax.set_ylim(0, 1.05)
         ax.set_yticks([0, 0.25, 0.5, 0.75, 1.0], ["0%", "25%", "50%", "75%", "100%"])
-        ax.set_title({"ours": "Our detector (steers the loop)", "desklib": "Independent detector (never steers)"}[det], loc="left", color=INK, fontsize=10, fontweight="bold", pad=8)
+        steers = bool(sub["steers"].iloc[0]) if "steers" in sub else det == "ours"
+        names = {"ours": "Our detector", "desklib": "Desklib", "fakespot": "Fakespot (judge)"}
+        ax.set_title(f"{names[det]} ({'steers the loop' if steers else 'never steers'})", loc="left", color=INK, fontsize=10, fontweight="bold", pad=8)
         if i == 0:
             ax.set_ylabel("Texts flagged as AI", color=INK2, fontsize=9)
             ax.legend(frameon=False, fontsize=8, labelcolor=INK2, loc="upper right")
@@ -212,15 +219,15 @@ def plot_iteration_curves(records: list[dict[str, Any]], path: Path, title: str,
     style_axes(ax)
     ax.grid(axis="y", color=GRID, linewidth=1)
     ax.grid(axis="x", visible=False)
-    for color, (det, (score_key, cut_key)) in zip(SERIES[:2], DETECTORS.items()):
-        if any(r["steps"][0][score_key] is None for r in records):
+    for color, (det, (score_key, cut_key)) in zip(SERIES, DETECTORS.items()):
+        if any(r["steps"][0].get(score_key) is None for r in records):
             continue
         ys = [np.mean([r["steps"][min(k, len(r["steps"]) - 1)][score_key] for r in records]) for k in range(top)]
         ax.plot(range(top), ys, color=color, linewidth=2, marker="o", markersize=5, markeredgecolor=SURFACE, markeredgewidth=1.5, solid_capstyle="round")
-        cut = float(np.mean([r[cut_key] for r in records]))
+        cut = float(np.mean([r[cut_key] for r in records]))  # one cutoff per genre; a mixed-genre log would need a panel per genre
         ax.axhline(cut, color=color, linewidth=1, linestyle=(0, (1, 2)))
-        ax.text(top - 1 + 0.05, ys[-1], {"ours": " our detector", "desklib": " desklib"}[det], color=INK2, fontsize=9, va="center")
-        ax.text(1.35, cut + 0.012, f"{'ours' if det == 'ours' else 'desklib'} cutoff (flags 5% of human text)", color=MUTED, fontsize=7.5, va="bottom")
+        ax.text(top - 1 + 0.05, ys[-1], {"ours": " our detector", "desklib": " desklib", "fakespot": " fakespot"}[det], color=INK2, fontsize=9, va="center")
+        ax.text(1.35, cut + 0.012, f"{det} cutoff (flags 5% of human text)", color=MUTED, fontsize=7.5, va="bottom")
     ax.set_xticks(range(top))
     ax.set_xlim(-0.15, top - 1 + 1.0)
     ax.set_ylim(0, 1.05)
@@ -335,7 +342,9 @@ def write_loop_report(records: list[dict[str, Any]], out_dir: Path, tag: str, su
     written["outcomes_md"] = out_dir / f"outcomes_{tag}.md"
     written["outcomes_md"].write_text(to_markdown(shown, percent=("evaded_of_detected", "rewrite_accepted")))
     kept = tables[0]
-    (out_dir / f"joint_{tag}.json").write_text(json.dumps({p: joint_success(records, p) for p in POLICIES}, indent=2))
+    joint = {p: {"ours+desklib": joint_success(records, p), "ours+desklib+fakespot": joint_success(records, p, detectors=("ours", "desklib", "fakespot")),
+                 "ours+fakespot": joint_success(records, p, detectors=("ours", "fakespot"))} for p in POLICIES}  # fmt: skip
+    (out_dir / f"joint_{tag}.json").write_text(json.dumps(joint, indent=2))
     plot_before_after(kept, figures / f"before_after_{tag}.png", "Flagged as AI before and after the loop", subtitle)
     written["before_after"] = figures / f"before_after_{tag}.png"
     plot_iteration_curves(records, figures / f"iterations_{tag}.png", "Detector score by number of rewrites", subtitle)

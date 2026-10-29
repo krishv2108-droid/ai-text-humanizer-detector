@@ -21,6 +21,9 @@ Stories of at most 400 words, validation split, humanizer `qwen3.8-27b`, `full` 
 | Flagged after the loop | 6% (2-19%) | **68% (51-81%)** |
 | **Rewrite kept, passes guardrails, fools BOTH detectors** | **32% (19-49%)** (11 of 34) | |
 
+Scored after the fact by a **third detector** (fakespot, which steered nothing): the same kept rewrites fool it on **44% (29-61%)** of stories, and
+all three detectors at once on **8 of 34 (24%; 12-40%)**. Evasion transfers well: 80% of the rewrites that fool desklib also fool fakespot.
+
 What we learned (details and limitations in `reports/FINDINGS.md`):
 
 - **Fooling our own detector is easy and says little.** Changing only punctuation and sentence boundaries, with every content
@@ -35,6 +38,8 @@ What we learned (details and limitations in `reports/FINDINGS.md`):
 - **Humanizer v2 (repair mode, two-sided feedback, number-and-name guard) did not measurably raise that 32%.** On 12 train
   stories it kept more meaning (0.90) and never lost a number, but fooled both detectors on 2 of 12 (5-45%); a further wording
   lever (v3) was tried and reverted (no effect, paired p = 0.68). With n = 12 these runs cannot rule out a small difference.
+- **Desklib steering is built, not yet measured.** `hd loop run --steer-desklib` lets desklib steer as well as our detector, judged
+  by fakespot. The free qwen quota ran out after 3 steered stories, so there is no result yet.
 
 First-pass comparison of prompt strategies (10 validation stories, `qwen3.8-27b`, prompt v1, before guardrails; still a pilot):
 
@@ -50,8 +55,8 @@ First-pass comparison of prompt strategies (10 validation stories, `qwen3.8-27b`
 1. **Detector:** interpretable linguistic features + a simple classifier, with per-sentence explanations.
 2. **Humanizer:** an LLM rewrites AI text, steered by the weaknesses the detector found.
 3. **Adversarial loop:** rewrite, score, feed feedback back, repeat (capped).
-4. **Honest evaluation:** rewrites are also scored by an independent open-source detector the
-   humanizer was never optimized against.
+4. **Honest evaluation:** rewrites are also scored by independent open-source detectors the humanizer was never
+   optimized against (desklib, and fakespot as a judge that never steers anything).
 
 ## Setup
 

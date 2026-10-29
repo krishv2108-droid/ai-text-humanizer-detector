@@ -1,9 +1,11 @@
 """The adversarial loop: rewrite -> score -> feedback -> rewrite, with a per-iteration log.
 
 Rules that keep the experiment honest:
-  * Only OUR detector steers the loop (its analysis becomes the next prompt's feedback; it decides when to
-    stop and which iteration to keep). The independent detector is scored at every step for the record but
-    never influences a decision, so its numbers stay a fair, unoptimized measurement.
+  * Only OUR detector steers the loop by default (its analysis becomes the next prompt's feedback; it decides when to
+    stop and which iteration to keep). With `steer_external` the independent detector (desklib) steers too: the loop
+    stops only when both stop flagging, keeps the rewrite with the lowest worst-case score, and a rewrite that desklib still
+    flags is told to be bolder. The JUDGE (a third detector) is scored at every step and NEVER influences a decision,
+    so its numbers stay a fair measurement even when desklib steers. Every log records who steered.
   * "Flagged" means above the frozen 5%-false-positive cutoff for that detector and genre, never 0.5.
   * Guardrails always compare against the ORIGINAL draft, so meaning can't drift a little each pass. A rewrite
     that fails them is never kept. In `repair` mode (default) the next attempt starts FROM that rejected rewrite, which
@@ -55,6 +57,7 @@ class Step:
     output_tokens: int = 0
     cached: bool = False
     retry_note: str = ""
+    judge: float | None = None  # the third detector's P(AI): recorded, never used to decide anything
 
 
 @dataclass
@@ -70,15 +73,27 @@ class LoopResult:
     humanizer_model: str = ""  # which LLM wrote the rewrites; results from different models must not be pooled
     prompt_version: str = "v1"  # logs written before versioning have no field and are v1; never pool across versions
     repair: bool = False  # whether failed rewrites were repaired in place (v2 default) or restarted from the last accepted draft
+    judge_cutoff: float | None = None  # frozen cutoff of the third (judge) detector, if one was scored
+    steer: list[str] = field(default_factory=lambda: ["ours"])  # which detectors decided anything: ["ours"] or ["ours", "external"]
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
-def choose_final(steps: list[Step]) -> int | None:
-    """The accepted rewrite our detector likes best (earliest on ties)."""
+def choose_final(steps: list[Step], our_cutoff: float | None = None, ext_cutoff: float | None = None, steer_external: bool = False) -> int | None:
+    """The accepted rewrite the steering detector(s) like best (earliest on ties). Never looks at the judge.
+
+    With only our detector steering that is the lowest P(AI). With desklib steering too, it is the lowest WORST-CASE score
+    relative to each detector's cutoff (a rewrite one detector still flags is worse than one both are nearly happy with).
+    """
     ok = [s for s in steps[1:] if s.guardrails_ok]
-    return min(ok, key=lambda s: (s.ours, s.iteration)).iteration if ok else None
+    if not ok:
+        return None
+    if steer_external:
+        if not our_cutoff or not ext_cutoff or any(s.external is None for s in ok):
+            raise ValueError("steering with the independent detector needs both cutoffs and its scores")
+        return min(ok, key=lambda s: (max(s.ours / our_cutoff, s.external / ext_cutoff), s.iteration)).iteration
+    return min(ok, key=lambda s: (s.ours, s.iteration)).iteration
 
 
 def _quoted(sentences: list[str], k: int = 4, width: int = 220) -> str:
@@ -108,6 +123,10 @@ def repair_note(g) -> str:
     return "Your previous attempt was rejected by an automatic check. Fix these problems and keep its new voice and rhythm wherever you can:\n- " + "\n- ".join(parts)
 
 
+STEER_NOTE = ("An independent detector still reads this as AI-written. Rewrite it more boldly: change the wording and the sentence "
+              "structure more, the way a different person would tell the same story, but keep every event, fact, name and number.")  # fmt: skip
+
+
 def _retry_note(flags: list[str]) -> str:
     return ("Your previous attempt was rejected: " + "; ".join(flags) + ". Stay closer to the original: keep every event "
             "and idea, keep a similar length, and add nothing new.")  # fmt: skip
@@ -127,13 +146,22 @@ def run_loop(
     max_iterations: int = 4,
     item_id: str = "",
     repair: bool = True,
+    judge=None,
+    judge_cutoff: float | None = None,
+    steer_external: bool = False,
 ) -> LoopResult:
+    if steer_external and (external is None or ext_cutoff is None):
+        raise ValueError("steer_external needs the independent detector and its cutoff")
+
     def ext_score(t: str) -> float | None:
         return None if external is None else float(external.predict_proba([t])[0])
 
+    def judge_score(t: str) -> float | None:
+        return None if judge is None else float(judge.predict_proba([t])[0])
+
     base = detector.analyze(text)
     original = base.text
-    steps = [Step(0, original, base.prob_ai, ext_score(original))]
+    steps = [Step(0, original, base.prob_ai, ext_score(original), judge=judge_score(original))]
     current, current_analysis, note = original, base, None  # the last ACCEPTED draft
     seen, stop = {original}, "max_iterations"
 
@@ -153,20 +181,25 @@ def run_loop(
         guard = checker.check(original, analysis.text)
         steps.append(Step(i, analysis.text, analysis.prob_ai, ext_score(analysis.text), guard.ok, list(guard.flags),
                           guard.similarity, guard.length_ratio, guard.fk_grade_after, rewrite.input_tokens, rewrite.output_tokens,
-                          rewrite.cached, note or ""))  # fmt: skip
+                          rewrite.cached, note or "", judge_score(analysis.text)))  # fmt: skip
         steps[0].fk_grade = steps[0].fk_grade if steps[0].fk_grade is not None else guard.fk_grade_before
         if guard.ok:
             current, current_analysis, note = analysis.text, analysis, None
-            if analysis.prob_ai <= our_cutoff:
+            ours_ok = analysis.prob_ai <= our_cutoff
+            ext_ok = not steer_external or steps[-1].external <= ext_cutoff
+            if ours_ok and ext_ok:
                 stop = "success"
                 break
+            if steer_external and not ext_ok:
+                note = STEER_NOTE  # faithful enough but desklib still flags it: push further, within the guardrails
         elif repair:  # keep the rejected rewrite's style and fix what the checks found wrong with it
             current, current_analysis, note = analysis.text, analysis, repair_note(guard)
         else:
             note = _retry_note(guard.flags)
 
-    return LoopResult(item_id, genre, strategy, our_cutoff, ext_cutoff, steps, choose_final(steps), stop,
-                      getattr(humanizer, "model", ""), PROMPT_VERSION, repair)  # fmt: skip
+    return LoopResult(item_id, genre, strategy, our_cutoff, ext_cutoff, steps, choose_final(steps, our_cutoff, ext_cutoff, steer_external),
+                      stop, getattr(humanizer, "model", ""), PROMPT_VERSION, repair, judge_cutoff,
+                      ["ours", "external"] if steer_external else ["ours"])  # fmt: skip
 
 
 def select_items(corpus: pd.DataFrame, split: str, genre: str, n: int, seed: int, *, unlock_test: bool = False,
@@ -227,15 +260,19 @@ def summarize(records: list[dict[str, Any]]) -> pd.DataFrame:
     rows = []
     frame = pd.DataFrame({"genre": [r["genre"] for r in records], "strategy": [r["strategy"] for r in records],
                           "model": [r.get("humanizer_model", "") for r in records],
-                          "prompt": [r.get("prompt_version", "v1") for r in records]})  # fmt: skip
-    for (genre, strategy, model, prompt), idx in frame.groupby(["genre", "strategy", "model", "prompt"]).groups.items():
+                          "prompt": [r.get("prompt_version", "v1") for r in records],
+                          "steer": ["+".join(r.get("steer", ["ours"])) for r in records]})  # fmt: skip
+    for (genre, strategy, model, prompt, steer), idx in frame.groupby(["genre", "strategy", "model", "prompt", "steer"]).groups.items():
         recs = [records[i] for i in idx]
-        row: dict[str, Any] = {"genre": genre, "strategy": strategy, "model": model, "prompt": prompt, "n": len(recs)}
+        row: dict[str, Any] = {"genre": genre, "strategy": strategy, "model": model, "prompt": prompt, "steer": steer, "n": len(recs)}
         row["ours_flagged_before"] = sum(r["steps"][0]["ours"] > r["our_cutoff"] for r in recs) / len(recs)
         row["ours_flagged_after"] = sum(_after(r, "ours") > r["our_cutoff"] for r in recs) / len(recs)
         if all(r["ext_cutoff"] is not None and r["steps"][0]["external"] is not None for r in recs):
             row["external_flagged_before"] = sum(r["steps"][0]["external"] > r["ext_cutoff"] for r in recs) / len(recs)
             row["external_flagged_after"] = sum(_after(r, "external") > r["ext_cutoff"] for r in recs) / len(recs)
+        if all(r.get("judge_cutoff") is not None and r["steps"][0].get("judge") is not None for r in recs):
+            row["judge_flagged_before"] = sum(r["steps"][0]["judge"] > r["judge_cutoff"] for r in recs) / len(recs)
+            row["judge_flagged_after"] = sum(_after(r, "judge") > r["judge_cutoff"] for r in recs) / len(recs)
         row["rewrite_accepted"] = sum(r["final"] is not None for r in recs) / len(recs)
         row["mean_rewrites_tried"] = sum(len(r["steps"]) - 1 for r in recs) / len(recs)
         kept = [r["steps"][r["final"]]["similarity"] for r in recs if r["final"] is not None]

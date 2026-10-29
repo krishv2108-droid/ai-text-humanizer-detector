@@ -20,14 +20,22 @@ from hd.humanizer.feedback import HumanProfile
 # ---- records shaped like the loop's JSONL ------------------------------------------------------------------------
 
 
-def step(i, text, ours, ext=None, ok=None, sim=None, fk=None):
-    return {"iteration": i, "text": text, "ours": ours, "external": ext, "guardrails_ok": ok, "flags": [], "similarity": sim,
-            "length_ratio": 1.0, "fk_grade": fk, "input_tokens": 100, "output_tokens": 50, "cached": False, "retry_note": ""}  # fmt: skip
+def step(i, text, ours, ext=None, ok=None, sim=None, fk=None, judge=None):
+    d = {"iteration": i, "text": text, "ours": ours, "external": ext, "guardrails_ok": ok, "flags": [], "similarity": sim,
+         "length_ratio": 1.0, "fk_grade": fk, "input_tokens": 100, "output_tokens": 50, "cached": False, "retry_note": ""}  # fmt: skip
+    if judge is not None:
+        d["judge"] = judge
+    return d
 
 
-def record(rid, steps, final, strategy="full", model="m/x", genre="story", our_cut=0.3, ext_cut=0.7):
-    return {"id": rid, "genre": genre, "strategy": strategy, "our_cutoff": our_cut, "ext_cutoff": ext_cut, "steps": steps,
-            "final": final, "stop_reason": "success", "humanizer_model": model}  # fmt: skip
+def record(rid, steps, final, strategy="full", model="m/x", genre="story", our_cut=0.3, ext_cut=0.7, judge_cut=None, steer=None):
+    r = {"id": rid, "genre": genre, "strategy": strategy, "our_cutoff": our_cut, "ext_cutoff": ext_cut, "steps": steps,
+         "final": final, "stop_reason": "success", "humanizer_model": model}  # fmt: skip
+    if judge_cut is not None:
+        r["judge_cutoff"] = judge_cut
+    if steer is not None:
+        r["steer"] = steer
+    return r
 
 
 def sample_records():
@@ -263,3 +271,43 @@ def test_control_table_flags_at_the_frozen_cutoffs_and_includes_the_original():
     assert table.loc["drop comma", "desklib_lo"] < 1.0 <= table.loc["drop comma", "desklib_hi"] + 1e-9  # interval, not certainty
     with_commas = control_table([t.replace(" ", ", ") for t in texts], {"drop comma": lambda t: t.replace(",", "")}, ours, ext, 0.3, 0.7).set_index("variant")
     assert with_commas.loc["original", "ours_flagged"] == 1.0 and with_commas.loc["drop comma", "ours_flagged"] == 0.0  # the surface-only detector is fooled
+
+
+def judged_records(steer=None):
+    # judge cutoff 0.5. a: all three fooled. b: desklib+judge fooled, ours not. c: judge still flags the kept rewrite.
+    return [
+        record("a", [step(0, "a0", 0.9, 0.95, judge=0.99), step(1, "a1", 0.1, 0.2, True, 0.9, 4.0, judge=0.1)], 1, judge_cut=0.5, steer=steer),
+        record("b", [step(0, "b0", 0.9, 0.95, judge=0.99), step(1, "b1", 0.1, 0.2, True, 0.9, 4.0, judge=0.9)], 1, judge_cut=0.5, steer=steer),
+        record("c", [step(0, "c0", 0.9, 0.95, judge=0.99), step(1, "c1", 0.9, 0.2, True, 0.9, 4.0, judge=0.1)], 1, judge_cut=0.5, steer=steer),
+    ]
+
+
+def test_three_detector_tables_and_joint_success():
+    recs = judged_records()
+    t = outcome_table(recs).set_index("detector")
+    assert set(t.index) == {"ours", "desklib", "fakespot"}
+    assert t.loc["fakespot", "flagged_before"] == 1.0 and t.loc["fakespot", "flagged_after"] == pytest.approx(1 / 3)  # only b is still flagged
+    assert t.loc["ours", "flagged_after"] == pytest.approx(1 / 3) and t.loc["desklib", "flagged_after"] == 0.0
+    assert joint_success(recs, detectors=("ours", "desklib"))["fooled_both"] == 2  # a and b
+    assert joint_success(recs, detectors=("ours", "desklib", "fakespot"))["fooled_both"] == 1  # only a satisfies all three
+    assert joint_success(recs, detectors=("ours", "fakespot"))["fooled_both"] == 1
+    assert joint_success(sample_records(), detectors=("ours", "fakespot"))["n"] == 0  # records without a judge are skipped
+
+
+def test_the_table_says_which_detectors_steered_and_never_pools_steering_modes():
+    plain, steered = judged_records(), judged_records(steer=["ours", "external"])
+    t = outcome_table(plain + steered).set_index(["steer", "detector"])
+    assert t.loc[("ours", "ours"), "steers"] and not t.loc[("ours", "desklib"), "steers"] and not t.loc[("ours", "fakespot"), "steers"]
+    assert t.loc[("ours+external", "desklib"), "steers"] and not t.loc[("ours+external", "fakespot"), "steers"]  # the judge never steers
+    assert (t["n"] == 3).all()  # two separate groups of three, not one group of six
+
+
+def test_report_writer_handles_the_judge_and_records_the_three_detector_claim(tmp_path):
+    import json as _json
+
+    written = write_loop_report(judged_records(steer=["ours", "external"]), tmp_path, "j", "3 texts")
+    joint = _json.loads((tmp_path / "joint_j.json").read_text())
+    assert joint["kept"]["ours+desklib+fakespot"]["fooled_both"] == 1 and joint["kept"]["ours+desklib"]["fooled_both"] == 2
+    assert written["before_after"].stat().st_size > 1000 and written["iterations"].stat().st_size > 1000
+    old_style = write_loop_report(sample_records(), tmp_path, "old", "4 texts")  # logs from before the judge existed still report
+    assert old_style["before_after"].exists()

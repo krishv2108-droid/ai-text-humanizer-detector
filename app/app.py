@@ -22,9 +22,9 @@ st.set_page_config(page_title="Humanizer vs. Detector", page_icon=None, layout="
 
 
 @st.cache_resource(show_spinner="Loading the detector (first time only)...")
-def resources(with_external: bool):
+def resources(with_external: bool, with_judge: bool):
     load_env()
-    return load_resources(load_config(), with_external)
+    return load_resources(load_config(), with_external, with_judge)
 
 
 def _load_example(key: str) -> None:
@@ -40,7 +40,7 @@ def banner() -> None:
     )
 
 
-def detect_tab(res, genre: str, use_external: bool) -> None:
+def detect_tab(res, genre: str, use_external: bool, use_judge: bool) -> None:
     text = st.text_area("Text to analyze", key="detect_text", height=220, placeholder="Paste a story, an answer or a short essay...")
     st.button("Load an example paragraph", key="detect_example", on_click=_load_example, args=("detect_text",))
     if st.button("Detect", type="primary", key="detect_go"):
@@ -61,6 +61,11 @@ def detect_tab(res, genre: str, use_external: bool) -> None:
             label2, why2 = verdict(ext, cuts["external"])
             c2.metric("Independent detector (desklib): P(AI)", f"{ext:.2f}", label2)
             c2.caption(why2)
+        if use_judge and res.judge is not None and cuts["judge"] is not None:
+            third = float(res.judge.predict_proba([analysis.text])[0])
+            label3, why3 = verdict(third, cuts["judge"])
+            st.metric("Third detector (fakespot): P(AI)", f"{third:.2f}", label3)
+            st.caption(why3)
         st.subheader("Sentence by sentence")
         st.caption("Darker = the sentence looks more AI-written to our detector. Hover a sentence for the reasons. "
                    "Sentence scores are a weakly supervised estimate: read them as hints, not verdicts.")  # fmt: skip
@@ -77,7 +82,7 @@ def detect_tab(res, genre: str, use_external: bool) -> None:
                    "predictability features) cover for each other, so the group chart is more trustworthy.")  # fmt: skip
 
 
-def humanize_tab(res, genre: str, use_external: bool) -> None:
+def humanize_tab(res, genre: str, use_external: bool, use_judge: bool) -> None:
     cfg = res.cfg
     text = st.text_area("AI-written text to rewrite", key="hum_text", height=220, placeholder="Paste AI-written text...")
     c1, c2, c3 = st.columns(3)
@@ -86,6 +91,9 @@ def humanize_tab(res, genre: str, use_external: bool) -> None:
     models = list(dict.fromkeys([cfg["llm"]["humanizer_model"]] + KNOWN_MODELS))
     model = c2.selectbox("Humanizer model (Groq)", models, help="Each Groq model has its own daily token allowance on the free tier.")
     rewrites = c3.slider("Max rewrites", 1, 4, 2, help="The loop stops early once our detector stops flagging a rewrite that keeps the meaning.")
+    steer = st.checkbox("Let desklib steer the rewrite too (stronger, uses more quota; desklib is then no longer an independent check)",
+                        value=False, key="hum_steer", disabled=not use_external,
+                        help="Needs the desklib option in the sidebar. The third detector (fakespot) never steers, so it stays a fair check.")  # fmt: skip
     dry = st.checkbox("Dry run: show the prompt, call no API", value=False, key="hum_dry")
     if text.strip() and not input_problem(text):
         st.caption(f"Rough cost if every rewrite runs: about {estimated_tokens(text, strategy, rewrites):,} tokens "
@@ -109,7 +117,8 @@ def humanize_tab(res, genre: str, use_external: bool) -> None:
         client = make_client(cfg, resolve_path(cfg, "cache"))
         with st.spinner("Rewriting and scoring (each rewrite is one API call plus local scoring)..."):
             result = humanize_text(res, client, text, genre, strategy=strategy, model=model, max_rewrites=rewrites,
-                                   use_external=use_external and res.external is not None, effort=cfg["llm"].get("humanizer_effort"))  # fmt: skip
+                                   use_external=use_external and res.external is not None, effort=cfg["llm"].get("humanizer_effort"),
+                                   steer_desklib=steer and use_external and res.external is not None, use_judge=use_judge and res.judge is not None)  # fmt: skip
     except DailyLimitReached as err:
         st.error(f"The free-tier daily limit for this model is used up ({err}). Try another model or wait.")
         return
@@ -130,7 +139,10 @@ def humanize_tab(res, genre: str, use_external: bool) -> None:
         m1.metric("Our detector: P(AI)", f"{after.ours:.2f}", f"{after.ours - before.ours:+.2f} vs original", delta_color="inverse")
         if after.external is not None:
             m2.metric("desklib: P(AI)", f"{after.external:.2f}", f"{after.external - before.external:+.2f} vs original", delta_color="inverse")
-        st.caption("Our detector steers the loop; desklib never does, so it is the fairer check. A rewrite can fool one and not the other.")
+        if after.judge is not None:
+            st.metric("fakespot (third detector, never steers): P(AI)", f"{after.judge:.2f}", f"{after.judge - before.judge:+.2f} vs original", delta_color="inverse")
+        st.caption("Our detector steers the loop" + (" and so does desklib" if result.steer == ["ours", "external"] else "; desklib never does")
+                   + ". Detectors that never steer are the fairer checks. A rewrite can fool one and not another.")  # fmt: skip
     st.subheader("Every attempt")
     st.dataframe(steps_frame(result), hide_index=True, use_container_width=True)
     if kept is None and len(result.steps) > 1:
@@ -149,16 +161,18 @@ def main() -> None:
     genre = st.sidebar.selectbox("Genre of the text", GENRES, help="Sets the human reference and the detector cutoff.")
     use_external = st.sidebar.checkbox("Also score with the independent detector (desklib)", value=False,
                                        help="Loads a ~1.7 GB model the first time; scoring is slower.", key="use_external")  # fmt: skip
+    use_judge = st.sidebar.checkbox("Also score with the third detector (fakespot)", value=False, key="use_judge",
+                                    help="Loads a ~0.5 GB model the first time. It only ever judges: it never steers a rewrite.")  # fmt: skip
     try:
-        res = resources(use_external)
+        res = resources(use_external, use_judge)
     except RuntimeError as err:
         st.error(str(err))
         st.stop()
     tab1, tab2 = st.tabs(["Detect", "Humanize"])
     with tab1:
-        detect_tab(res, genre, use_external)
+        detect_tab(res, genre, use_external, use_judge)
     with tab2:
-        humanize_tab(res, genre, use_external)
+        humanize_tab(res, genre, use_external, use_judge)
     with st.expander("Limitations"):
         st.markdown(
             "- Trained and tested on one AI generator per genre (2022 ChatGPT for essays/casual, one open model for stories): "

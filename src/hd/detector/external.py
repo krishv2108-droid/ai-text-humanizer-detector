@@ -68,3 +68,66 @@ class DesklibDetector:
             logits = self.model(input_ids=enc["input_ids"], attention_mask=enc["attention_mask"])["logits"]
             out[idx] = torch.sigmoid(logits.float()).squeeze(-1).cpu().numpy()
         return out
+
+
+# ---- third detector: a different architecture and training set from both ours and desklib -------------------------
+
+FAKESPOT = "fakespot-ai/roberta-base-ai-text-detection-v1"
+
+
+def _clean_markdown(md: str) -> str:
+    """Markdown stripping recommended on the model card (Apache-2.0): the model was trained on text without markup."""
+    import re
+    from html import unescape
+
+    md = re.sub(r"```.*?```", "", md, flags=re.DOTALL)
+    md = re.sub(r"`[^`]*`", "", md)
+    md = re.sub(r"!\[.*?\]\(.*?\)", "", md)
+    md = re.sub(r"\[([^\]]+)\]\(.*?\)", r"\1", md)
+    md = re.sub(r"(\*\*|__)(.*?)\1", r"\2", md)
+    md = re.sub(r"(\*|_)(.*?)\1", r"\2", md)
+    md = re.sub(r"#+ ", "", md)
+    md = re.sub(r"^>.*$", "", md, flags=re.MULTILINE)
+    md = re.sub(r"^(\s*[-*+]|\d+\.)\s+", "", md, flags=re.MULTILINE)
+    md = re.sub(r"^\s*[-*_]{3,}\s*$", "", md, flags=re.MULTILINE)
+    md = re.sub(r"\|.*?\|", "", md)
+    md = re.sub(r"<.*?>", "", md)
+    return unescape(md)
+
+
+def clean_for_fakespot(text: str) -> str:
+    import re
+
+    t = _clean_markdown(text).replace("\n", " ").replace("\t", " ").replace("\r", " ").replace(" ,", ",")
+    return re.sub(" +", " ", t)
+
+
+class FakespotDetector:
+    """RoBERTa-base fine-tuned for AI-text detection (Apache-2.0). Used as a THIRD, independent judge.
+
+    Never used to train or tune anything. Its training data is described only in a separate technical report, so overlap
+    with our sources cannot be ruled out; the AUC on our own validation texts is what says whether it is a useful judge.
+    """
+
+    name = "fakespot"
+
+    def __init__(self, model_name: str = FAKESPOT, max_len: int = 512, batch_size: int = 16, device: str | None = None):
+        from transformers import AutoModelForSequenceClassification
+
+        self.device = device or pick_device()
+        self.max_len, self.batch_size = max_len, batch_size
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.model = AutoModelForSequenceClassification.from_pretrained(model_name).to(self.device).eval()
+        self.ai_index = int(self.model.config.label2id["AI"])
+
+    @torch.no_grad()
+    def predict_proba(self, texts: list[str]) -> np.ndarray:
+        cleaned = [clean_for_fakespot(t) for t in texts]
+        order = np.argsort([len(t) for t in cleaned])
+        out = np.zeros(len(texts))
+        for start in range(0, len(texts), self.batch_size):
+            idx = order[start : start + self.batch_size]
+            enc = self.tokenizer([cleaned[i] for i in idx], padding=True, truncation=True, max_length=self.max_len, return_tensors="pt").to(self.device)
+            probs = torch.softmax(self.model(**enc).logits.float(), dim=-1)[:, self.ai_index]
+            out[idx] = probs.cpu().numpy()
+        return out

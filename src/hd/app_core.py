@@ -52,9 +52,10 @@ class Resources:
     embedder: Any
     thresholds: dict[str, dict[str, float]]
     external: Any | None = None
+    judge: Any | None = None  # the third detector (fakespot): scored and shown, never used to decide anything
 
 
-def load_resources(cfg: dict[str, Any], with_external: bool = False) -> Resources:
+def load_resources(cfg: dict[str, Any], with_external: bool = False, with_judge: bool = False) -> Resources:
     """Load models once (the app caches this). Raises RuntimeError with a clear message if training hasn't been run."""
     from hd.detector.explain import Detector
     from hd.humanizer.feedback import HumanProfile
@@ -70,7 +71,12 @@ def load_resources(cfg: dict[str, Any], with_external: bool = False) -> Resource
         from hd.detector.external import DesklibDetector
 
         external = DesklibDetector()
-    return Resources(cfg, detector, profile, SentenceEmbedder(), thresholds, external)
+    judge = None
+    if with_judge:
+        from hd.detector.external import FakespotDetector
+
+        judge = FakespotDetector()
+    return Resources(cfg, detector, profile, SentenceEmbedder(), thresholds, external, judge)
 
 
 def word_count(text: str) -> int:
@@ -111,6 +117,7 @@ def cutoffs_for(res: Resources, genre: str) -> dict[str, float | None]:
     """Frozen cutoffs for the genre. A missing one is an error (never a silent 0.5); desklib's is None only if it was never calibrated."""
     out: dict[str, float | None] = {"ours": cutoff_for(res.thresholds, "ours", genre)}
     out["external"] = cutoff_for(res.thresholds, "external", genre) if "external" in res.thresholds else None
+    out["judge"] = cutoff_for(res.thresholds, "third", genre) if "third" in res.thresholds else None
     return out
 
 
@@ -169,19 +176,28 @@ def humanize_text(
     max_rewrites: int,
     use_external: bool,
     effort: str | None = None,
+    steer_desklib: bool = False,
+    use_judge: bool = False,
 ) -> LoopResult:
-    """Run the adversarial loop on one text, exactly as `hd loop run` does for the experiments."""
+    """Run the adversarial loop on one text, exactly as `hd loop run` does for the experiments.
+
+    `steer_desklib` lets desklib steer as well as our detector (stronger, but then desklib is no longer an independent check);
+    `use_judge` also scores every attempt with the third detector, which never decides anything.
+    """
     if strategy not in STRATEGIES:
         raise ValueError(f"unknown strategy {strategy!r}")
     cuts = cutoffs_for(res, genre)
     external = res.external if use_external else None
-    if use_external and external is None:
+    if (use_external or steer_desklib) and external is None:
         raise RuntimeError("the independent detector is not loaded; enable it in the sidebar first")
+    if use_judge and (res.judge is None or cuts["judge"] is None):
+        raise RuntimeError("the third detector is not loaded (or has no cutoff); enable it in the sidebar first")
     humanizer = Humanizer(client, model, res.profile, effort)
     checker = checker_for(res.cfg, res.embedder, res.detector.scorer, res.profile, genre)
     return run_loop(res.detector, humanizer, checker, text, genre, strategy=strategy, our_cutoff=cuts["ours"],
                     ext_cutoff=cuts["external"] if external is not None else None, external=external,
-                    max_iterations=max_rewrites)  # fmt: skip
+                    max_iterations=max_rewrites, judge=res.judge if use_judge else None,
+                    judge_cutoff=cuts["judge"] if use_judge else None, steer_external=steer_desklib)  # fmt: skip
 
 
 def steps_frame(result: LoopResult) -> pd.DataFrame:
@@ -191,6 +207,7 @@ def steps_frame(result: LoopResult) -> pd.DataFrame:
         rows.append({
             "rewrite": s.iteration, "our P(AI)": round(s.ours, 3),
             "desklib P(AI)": None if s.external is None else round(s.external, 3),
+            "fakespot P(AI)": None if s.judge is None else round(s.judge, 3),
             "kept": "kept" if result.final == s.iteration else ("original" if s.iteration == 0 else ""),
             "guardrails": "" if s.guardrails_ok is None else ("ok" if s.guardrails_ok else "failed"),
             "why not": "; ".join(s.flags), "meaning similarity": None if s.similarity is None else round(s.similarity, 2),
