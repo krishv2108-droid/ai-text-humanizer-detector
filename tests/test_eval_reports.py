@@ -11,7 +11,7 @@ from hd.eval import final as final_mod
 from hd.detector.baseline import model_features
 from hd.eval.ablation import group_ablation
 from hd.eval.final import TestSetAlreadyUsed, detector_test_table, final_eval_runs, log_test_access, unlock_for_final
-from hd.eval.loop_report import (feature_shift, first_pass_table, human_spread, outcome_step, outcome_table, plot_before_after,
+from hd.eval.loop_report import (joint_success, feature_shift, first_pass_table, human_spread, outcome_step, outcome_table, plot_before_after,
                                  plot_feature_shift, plot_iteration_curves, plot_strategy_ablation, to_markdown, wilson_ci,
                                  write_loop_report)  # fmt: skip
 from hd.eval.manual_kit import build_manual_kit, write_log_template
@@ -231,3 +231,21 @@ def test_manual_kit_is_blind_exports_only_ai_text_and_has_an_answer_key(tmp_path
     write_log_template(tmp_path / "log.csv", [k["sample"] for k in key], own_controls=2)
     rows = list(csv.DictReader(open(tmp_path / "log.csv")))
     assert [r["sample"] for r in rows][-2:] == ["sample-own-1", "sample-own-2"] and len(rows) == 6 and rows[0]["tool"] == ""
+
+
+def test_joint_success_needs_a_kept_rewrite_below_both_cutoffs():
+    recs = sample_records()  # a: both fixed, b: desklib still flags, c: failed guardrails (unchanged), d: fixed-looking but never flagged by ours
+    kept = joint_success(recs, "kept")
+    assert kept["n"] == 4 and kept["fooled_both"] == 1 and kept["rate"] == 0.25  # only 'a'; 'd' keeps a desklib-flagged rewrite
+    assert kept["lo"] <= 0.25 <= kept["hi"]
+    unguarded = joint_success(recs, "unguarded")
+    assert unguarded["fooled_both"] == 2  # ignoring guardrails, c's rewrite fooled both detectors as well
+    only_long = joint_success(recs, "kept", extra_ok=lambda r, s: r["id"] != "a")  # an extra requirement can veto a win
+    assert only_long["fooled_both"] == 0
+
+
+def test_joint_success_skips_records_without_the_independent_detector():
+    recs = sample_records()
+    for r in recs:
+        r["ext_cutoff"] = None
+    assert joint_success(recs)["n"] == 0 and math.isnan(joint_success(recs)["rate"])

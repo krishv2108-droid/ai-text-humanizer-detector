@@ -87,3 +87,100 @@ def run_calibration(cfg: dict[str, Any], n: int = 150) -> pd.DataFrame:
     summary["n"] = raw.groupby("scenario").size()
     summary.to_csv(results / "guardrail_calibration.csv")
     return summary
+
+
+# ---- do the content checks tell restructuring from damage? ----------------------------------------------------------
+
+_BREAK = re.compile(r"(?:,\s+(?:and|but|so|yet|while|as|because)\s+|;\s+|\s*[—–]\s*|,\s+)")
+
+
+def split_into_fragments(text: str) -> str:
+    """Cut every sentence at its commas, dashes, semicolons and conjunctions (parts of 3+ words), each part a sentence.
+
+    Content-preserving by construction: no content word is added or removed; only punctuation, capitals and the
+    linking conjunction at each cut (", and" / ", but" ...) change. This is the kind of restructuring a 'vary your
+    rhythm, use fragments' prompt produces.
+    """
+    out = []
+    for sent in split_sentences(text):
+        end = sent[-1] if sent[-1] in ".!?" else "."
+        body = sent.rstrip(".!?\"' ")
+        parts, buf = [], ""
+        for piece in re.split(f"({_BREAK.pattern})", body):
+            if _BREAK.fullmatch(piece):
+                if len(buf.split()) >= 3:
+                    parts.append(buf)
+                    buf = ""
+                else:
+                    buf += piece
+            else:
+                buf += piece
+        parts.append(buf)
+        parts = [p.strip() for p in parts if p.strip()]
+        out.extend(f"{p[0].upper()}{p[1:]}{'.' if i < len(parts) - 1 else end}" for i, p in enumerate(parts))
+    return " ".join(out)
+
+
+def merge_pairs(text: str) -> str:
+    """Join sentences two at a time with ', and' (content-preserving)."""
+    sents = split_sentences(text)
+    merged = []
+    for i in range(0, len(sents), 2):
+        a = sents[i]
+        if i + 1 < len(sents):
+            b = sents[i + 1]
+            merged.append(f"{a.rstrip('.!?')}, and {b[0].lower()}{b[1:]}")
+        else:
+            merged.append(a)
+    return " ".join(merged)
+
+
+PRESERVING = ("identical", "split", "merge")
+DAMAGING = ("drop30", "swap30")
+
+
+def coverage_scenarios(text: str, other_texts: list[str], rng: random.Random) -> dict[str, str]:
+    sents = split_sentences(text)
+    keep = [s for s in sents if rng.random() > 0.30] or sents[:1]
+    donors = [s for t in rng.sample(other_texts, 3) for s in split_sentences(t)]
+    swapped = [rng.choice(donors) if rng.random() < 0.30 else s for s in sents]
+    return {"identical": text, "split": split_into_fragments(text), "merge": merge_pairs(text), "drop30": " ".join(keep), "swap30": " ".join(swapped)}
+
+
+def run_restructuring_check(cfg: dict[str, Any], split: str = "train", genre: str = "story", n: int = 60) -> pd.DataFrame:
+    """Do the content checks tell restructuring from damage? Per text and scenario: dropped/invented fractions.
+
+    Uses TRAIN texts by default (this is design/validation work on the guardrail, not a result about rewrites).
+    """
+    corpus = pd.read_parquet(resolve_path(cfg, "processed") / "corpus.parquet")
+    part = load_split(corpus[corpus["has_pair"]], split)  # the test split stays locked
+    ai = part[(part["label"] == 1) & (part["genre"] == genre)]
+    ai = ai[ai["text"].map(lambda t: len(split_sentences(t)) >= 6)]
+    sample = ai.sample(min(n, len(ai)), random_state=cfg["seed"])
+    rng = random.Random(cfg["seed"])
+    checker = GuardrailChecker(SentenceEmbedder(), Thresholds.from_config(cfg))
+    rows = []
+    for _, row in sample.iterrows():
+        others = ai[ai["prompt_id"] != row["prompt_id"]]["text"].tolist()
+        for name, rewrite in coverage_scenarios(row["text"], others, rng).items():
+            sem = checker.semantic(row["text"], rewrite)
+            rows.append({"scenario": name, "id": row["id"], "dropped_frac": sem["dropped_frac"], "invented_frac": sem["invented_frac"], "similarity": sem["similarity"]})  # fmt: skip
+    return pd.DataFrame(rows)
+
+
+def summarize_restructuring(raw: pd.DataFrame, max_dropped: float, max_invented: float) -> pd.DataFrame:
+    """How well the content checks separate damage from restructuring: AUC, and flag rates at the configured thresholds."""
+    from sklearn.metrics import roc_auc_score
+
+    keep = raw[raw["scenario"].isin(PRESERVING)]
+    rows = []
+    for damage, metric, limit in (("drop30", "dropped_frac", max_dropped), ("swap30", "invented_frac", max_invented)):
+        bad = raw[raw["scenario"] == damage]
+        both = pd.concat([keep.assign(y=0), bad.assign(y=1)])
+        rows.append({
+            "damage": damage, "metric": metric, "threshold": limit, "n_texts": bad["id"].nunique(),
+            "auc_vs_restructuring": roc_auc_score(both["y"], both[metric]), "flagged_when_damaged": float((bad[metric] > limit).mean()),
+            **{f"flagged_when_{s}": float((raw[raw["scenario"] == s][metric] > limit).mean()) for s in PRESERVING},
+            "restructuring_p95": float(keep[metric].quantile(0.95)),
+        })  # fmt: skip
+    return pd.DataFrame(rows)

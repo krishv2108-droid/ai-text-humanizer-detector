@@ -39,13 +39,17 @@ class FakeHumanizer:
 
 
 class FakeChecker:
+    """`bad` is a set of rewrites that fail, or a dict {rewrite: extra report fields} to give the failure details."""
+
     def __init__(self, bad=()):
-        self.bad, self.compared_to = set(bad), []
+        self.bad, self.compared_to = bad, []
 
     def check(self, original, rewrite):
         self.compared_to.append(original)
-        flags = ["meaning drifted from the original"] if rewrite in self.bad else []
-        return GuardrailReport(0.9, 0.0, 0.0, 1.0, 5.0, 5.0, 70.0, 70.0, 0.0, None, flags)
+        if rewrite not in self.bad:
+            return GuardrailReport(0.9, 0.0, 0.0, 1.0, 5.0, 5.0, 70.0, 70.0, 0.0, None, [])
+        details = self.bad[rewrite] if isinstance(self.bad, dict) else {}
+        return GuardrailReport(0.9, 0.0, 0.0, 1.0, 5.0, 5.0, 70.0, 70.0, 0.0, None, ["meaning drifted from the original"], **details)
 
 
 class FakeExternal:
@@ -56,10 +60,11 @@ class FakeExternal:
         return [self.probs[t] for t in texts]
 
 
-def go(probs, outputs, bad=(), external=None, max_iterations=4):
+def go(probs, outputs, bad=(), external=None, max_iterations=4, repair=True):
     humanizer, checker = FakeHumanizer(outputs), FakeChecker(bad)
     result = run_loop(FakeDetector(probs), humanizer, checker, "orig", "story", strategy="full", our_cutoff=CUT,
-                      ext_cutoff=0.9 if external else None, external=external, max_iterations=max_iterations, item_id="x")  # fmt: skip
+                      ext_cutoff=0.9 if external else None, external=external, max_iterations=max_iterations, item_id="x",
+                      repair=repair)  # fmt: skip
     return result, humanizer, checker
 
 
@@ -86,16 +91,52 @@ def test_runs_out_of_iterations_and_keeps_the_best_accepted_rewrite():
     assert result.final == 2  # lowest score, not the last one
 
 
-def test_guardrail_failure_is_discarded_and_the_retry_is_told_why():
-    result, humanizer, checker = go({"orig": 0.9, "r1": 0.05, "r2": 0.80, "r3": 0.20}, ["r1", "r2", "r3"], bad={"r1", "r2"})
+def test_without_repair_a_failed_rewrite_is_discarded_and_the_retry_restarts_from_the_last_accepted_draft():
+    result, humanizer, checker = go({"orig": 0.9, "r1": 0.05, "r2": 0.80, "r3": 0.20}, ["r1", "r2", "r3"], bad={"r1", "r2"}, repair=False)
     # r1 fooled the detector but broke the guardrails, so it can't be kept or end the loop
     assert [s.guardrails_ok for s in result.steps[1:]] == [False, False, True]
-    assert result.final == 3 and result.stop_reason == "success"
+    assert result.final == 3 and result.stop_reason == "success" and result.repair is False
     assert humanizer.calls[1]["retry_note"].startswith("Your previous attempt was rejected")
     assert "meaning drifted" in humanizer.calls[1]["retry_note"]
-    assert all(c["draft"] == "orig" for c in humanizer.calls[:2])  # restarted from the last accepted draft
-    assert humanizer.calls[2]["draft"] == "orig" and humanizer.calls[2]["original"] == "orig"
+    assert all(c["draft"] == "orig" for c in humanizer.calls)  # restarted from the original every time
     assert set(checker.compared_to) == {"orig"}  # always judged against the original, never the previous rewrite
+
+
+def test_repair_mode_fixes_the_rejected_rewrite_and_names_exactly_what_is_wrong():
+    details = {"r1": {"missing_sentences": ["Marta stared at the cup."], "invented_sentences": ["A dragon appeared."],
+                      "missing_numbers": [78], "missing_names": ["spokane"], "novel_words": ["glorbish"]}}  # fmt: skip
+    result, humanizer, checker = go({"orig": 0.9, "r1": 0.05, "r2": 0.10}, ["r1", "r2"], bad=details)
+    assert [s.guardrails_ok for s in result.steps[1:]] == [False, True] and result.final == 2 and result.stop_reason == "success"
+    assert humanizer.calls[1]["draft"] == "r1" and humanizer.calls[1]["original"] == "orig"  # the rejected rewrite is the draft now
+    assert humanizer.calls[1]["analysis"].text == "r1"  # feedback is about the draft being repaired
+    note = humanizer.calls[1]["retry_note"]
+    for expected in ("Marta stared at the cup.", "A dragon appeared.", "78", "spokane", "glorbish", "keep its new voice"):
+        assert expected in note
+    assert set(checker.compared_to) == {"orig"}  # still judged against the original, so repairs cannot drift
+    assert result.steps[2].retry_note == note and result.repair is True
+
+
+def test_repair_failure_is_never_kept_even_if_it_fooled_the_detector():
+    result, _, _ = go({"orig": 0.9, "r1": 0.0, "r2": 0.0}, ["r1", "r2"], bad={"r1", "r2"}, max_iterations=2)
+    assert result.final is None  # two rejected repairs: nothing is kept, however well they scored
+
+
+def test_repair_note_only_mentions_what_failed():
+    from hd.loop import repair_note
+
+    g = GuardrailReport(0.7, 0.3, 0.0, 1.6, 5.0, 2.0, 70.0, 80.0, 0.0, None,
+                        ["length changed too much (1.60x)", "reading level 2.0 outside the human range 3.0 to 11.0"], missing_sentences=["a", "b", "c", "d", "e", "f"])  # fmt: skip
+    note = repair_note(g)
+    assert "(and 2 more)" in note and "1.60x" in note and "reading level" in note.lower()
+    assert "numbers" not in note and "names" not in note and "typos" not in note
+    assert "Stay closer" in repair_note(GuardrailReport(0.7, 0, 0, 1.0, 5.0, 5.0, 70.0, 70.0, 0.0))  # generic fallback
+
+
+def test_results_record_the_prompt_version_and_repair_setting():
+    from hd.humanizer.prompts import PROMPT_VERSION
+
+    result, _, _ = go({"orig": 0.9, "r1": 0.1}, ["r1"])
+    assert result.to_dict()["prompt_version"] == PROMPT_VERSION == "v2" and result.to_dict()["repair"] is True
 
 
 def test_next_attempt_builds_on_the_latest_accepted_rewrite():

@@ -13,6 +13,7 @@ Neither policy looks at the independent detector, so its numbers stay an unoptim
 
 from __future__ import annotations
 
+import json
 import math
 from pathlib import Path
 from typing import Any, Callable
@@ -59,9 +60,10 @@ def _flagged(rec: dict[str, Any], step: dict[str, Any], detector: str) -> bool |
 def outcome_table(records: list[dict[str, Any]], policy: str = "kept") -> pd.DataFrame:
     """One row per (genre, strategy, humanizer model, detector): flagged rate before and after, with intervals."""
     frame = pd.DataFrame({"genre": [r["genre"] for r in records], "strategy": [r["strategy"] for r in records],
-                          "model": [r.get("humanizer_model", "") for r in records]})  # fmt: skip
+                          "model": [r.get("humanizer_model", "") for r in records],
+                          "prompt": [r.get("prompt_version", "v1") for r in records]})  # fmt: skip
     rows = []
-    for (genre, strategy, model), idx in frame.groupby(["genre", "strategy", "model"]).groups.items():
+    for (genre, strategy, model, prompt), idx in frame.groupby(["genre", "strategy", "model", "prompt"]).groups.items():
         recs = [records[i] for i in idx]
         for det in DETECTORS:
             pairs = [(_flagged(r, r["steps"][0], det), _flagged(r, outcome_step(r, policy), det)) for r in recs]
@@ -72,7 +74,7 @@ def outcome_table(records: list[dict[str, Any]], policy: str = "kept") -> pd.Dat
             detected = [(b, a) for b, a in pairs if b]
             kept = [r["steps"][r["final"]] for r in recs if r["final"] is not None]
             rows.append({
-                "genre": genre, "strategy": strategy, "model": model, "policy": policy, "detector": det, "n": n,
+                "genre": genre, "strategy": strategy, "model": model, "prompt": prompt, "policy": policy, "detector": det, "n": n,
                 "flagged_before": kb / n, "before_lo": wilson_ci(kb, n)[0], "before_hi": wilson_ci(kb, n)[1],
                 "flagged_after": ka / n, "after_lo": wilson_ci(ka, n)[0], "after_hi": wilson_ci(ka, n)[1],
                 "n_detected_before": len(detected),
@@ -81,6 +83,25 @@ def outcome_table(records: list[dict[str, Any]], policy: str = "kept") -> pd.Dat
                 "mean_similarity_kept": float(np.mean([s["similarity"] for s in kept])) if kept else math.nan,
             })  # fmt: skip
     return pd.DataFrame(rows)
+
+
+def joint_success(records: list[dict[str, Any]], policy: str = "kept", extra_ok: Callable[[dict[str, Any], dict[str, Any]], bool] | None = None) -> dict[str, Any]:
+    """The headline 'working humanizer' rate: the text a user gets passes the guardrails AND neither detector flags it.
+
+    Under policy 'kept' a failed rewrite means the user keeps the original, which is flagged, so it never counts.
+    `extra_ok(record, step)` adds a further requirement on the step (e.g. a newer check replayed on old logs).
+    Records without the independent detector are skipped (the claim needs both).
+    """
+    usable = [r for r in records if all(r["steps"][0][k] is not None for k in ("ours", "external")) and r["ext_cutoff"] is not None]
+    wins = 0
+    for r in usable:
+        step = outcome_step(r, policy)
+        if step is r["steps"][0]:
+            continue
+        if step["ours"] <= r["our_cutoff"] and step["external"] <= r["ext_cutoff"] and (extra_ok is None or extra_ok(r, step)):
+            wins += 1
+    lo, hi = wilson_ci(wins, len(usable))
+    return {"n": len(usable), "fooled_both": wins, "rate": wins / len(usable) if usable else math.nan, "lo": lo, "hi": hi}
 
 
 def first_pass_table(by_strategy: dict[str, list[dict[str, Any]]]) -> pd.DataFrame:
@@ -95,7 +116,8 @@ def first_pass_table(by_strategy: dict[str, list[dict[str, Any]]]) -> pd.DataFra
         if not firsts:
             continue
         n = len(firsts)
-        row: dict[str, Any] = {"strategy": strategy, "n": n}
+        versions = sorted({r.get("prompt_version", "v1") for r, _ in firsts})
+        row: dict[str, Any] = {"strategy": strategy, "prompt": "+".join(versions), "n": n}
         for det, (score_key, cut_key) in DETECTORS.items():
             if any(s[score_key] is None or r[cut_key] is None for r, s in firsts):
                 continue
@@ -309,10 +331,11 @@ def write_loop_report(records: list[dict[str, Any]], out_dir: Path, tag: str, su
     full.round(4).to_csv(written["outcomes"], index=False)
     shown = full.assign(before=[interval_label(a, b, c) for a, b, c in zip(full.flagged_before, full.before_lo, full.before_hi)],
                         after=[interval_label(a, b, c) for a, b, c in zip(full.flagged_after, full.after_lo, full.after_hi)])  # fmt: skip
-    shown = shown[["genre", "strategy", "model", "policy", "detector", "n", "before", "after", "evaded_of_detected", "rewrite_accepted", "mean_similarity_kept"]]
+    shown = shown[["genre", "strategy", "model", "prompt", "policy", "detector", "n", "before", "after", "evaded_of_detected", "rewrite_accepted", "mean_similarity_kept"]]
     written["outcomes_md"] = out_dir / f"outcomes_{tag}.md"
     written["outcomes_md"].write_text(to_markdown(shown, percent=("evaded_of_detected", "rewrite_accepted")))
     kept = tables[0]
+    (out_dir / f"joint_{tag}.json").write_text(json.dumps({p: joint_success(records, p) for p in POLICIES}, indent=2))
     plot_before_after(kept, figures / f"before_after_{tag}.png", "Flagged as AI before and after the loop", subtitle)
     written["before_after"] = figures / f"before_after_{tag}.png"
     plot_iteration_curves(records, figures / f"iterations_{tag}.png", "Detector score by number of rewrites", subtitle)

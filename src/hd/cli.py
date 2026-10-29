@@ -41,6 +41,7 @@ def build_parser() -> argparse.ArgumentParser:
     hum = sub.add_parser("humanizer", help="humanizer commands")
     hum_sub = hum.add_subparsers(dest="humanizer_command", required=True)
     hum_sub.add_parser("calibrate-guardrails", help="simulate rewrite failures; measure how the guardrails respond")
+    hum_sub.add_parser("check-restructuring", help="do the content checks tell restructuring (splitting/merging) from damage (deleting/swapping)?")
 
     humanize = sub.add_parser("humanize", help="rewrite AI text to read as human; show before/after scores")
     humanize.add_argument("text", nargs="?", help="the text (or use --file / stdin)")
@@ -62,6 +63,8 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--max-words", type=int, help="only texts up to this many words (needed for models with small output caps)")
     run.add_argument("--max-iterations", type=int, help="default: loop.max_iterations from the config")
     run.add_argument("--no-external", action="store_true", help="skip the independent detector (faster; fewer claims)")
+    run.add_argument("--no-repair", action="store_true", help="v1 behaviour: after a rejected rewrite restart from the last accepted draft with a generic note")
+    run.add_argument("--tag", default="", help="suffix for the log file name (e.g. v2), so runs with different settings never share a file")
     run.add_argument("--out", help="JSONL log (default: data/processed/loop_<split>_<genre>_<strategy>_<model>.jsonl)")
     summ = loop_sub.add_parser("summary", help="detection rates before/after from a loop log")
     summ.add_argument("file", help="a JSONL log written by `hd loop run`")
@@ -80,6 +83,7 @@ def build_parser() -> argparse.ArgumentParser:
     abp.add_argument("--split", choices=["train", "val"], default="val")
     abp.add_argument("--model", required=True, help="the humanizer model the logs were made with")
     abp.add_argument("--max-words", type=int)
+    abp.add_argument("--tag", default="", help="the --tag the logs were made with (e.g. v2)")
     abf = ev_sub.add_parser("ablate-features", help="detector: AUC with each feature group dropped / on its own (train+val only)")
     abf.add_argument("--n-boot", type=int, default=200)
     fin = ev_sub.add_parser("final", help="THE held-out test evaluation; runs once (logged)")
@@ -233,6 +237,13 @@ def _run_humanizer(args: argparse.Namespace, cfg: dict) -> int:
         pd.set_option("display.width", 250)
         pd.set_option("display.max_columns", 40)
         print(run_calibration(cfg).T.to_string())
+    elif args.humanizer_command == "check-restructuring":
+        from hd.humanizer.calibrate import run_restructuring_check, summarize_restructuring
+
+        g = cfg["guardrails"]
+        table = summarize_restructuring(run_restructuring_check(cfg), g["max_dropped_frac"], g["max_invented_frac"]).round(3)
+        table.to_csv(resolve_path(cfg, "results") / "guardrail_restructuring.csv", index=False)
+        print(table.to_string(index=False))
     return 0
 
 
@@ -343,13 +354,14 @@ def _run_loop(args: argparse.Namespace, cfg: dict) -> int:
                          max_words=args.max_words, unlock_test=on_test)
     if items.empty:
         raise RuntimeError(f"no AI {args.genre} texts in the {args.split} split; generate/build them first")
-    out = Path(args.out) if args.out else log_path(processed, args.split, args.genre, args.strategy, model, args.max_words)
+    out = Path(args.out) if args.out else log_path(processed, args.split, args.genre, args.strategy, model, args.max_words, args.tag)
     max_iter = args.max_iterations or cfg["loop"]["max_iterations"]
 
     def run_one(item: dict):
         print(f"  {item['id']}: {item['n_words']} words ...", flush=True)
         return run_loop(detector, humanizer, checker, item["text"], args.genre, strategy=args.strategy, our_cutoff=our_cut,
-                        ext_cutoff=ext_cut, external=external, max_iterations=max_iter, item_id=item["id"])  # fmt: skip
+                        ext_cutoff=ext_cut, external=external, max_iterations=max_iter, item_id=item["id"],
+                        repair=not args.no_repair)  # fmt: skip
 
     stats = run_batch(items.to_dict("records"), out, run_one)
     print({k: v for k, v in stats.items() if k != "message"})
@@ -391,12 +403,12 @@ def _run_eval(args: argparse.Namespace, cfg: dict) -> int:
         from hd.eval.loop_report import first_pass_table, plot_strategy_ablation, to_markdown
         from hd.humanizer.prompts import STRATEGIES
 
-        by = {s: load_results(p) for s in STRATEGIES if (p := log_path(processed, args.split, args.genre, s, args.model, args.max_words)).exists()}
+        by = {s: load_results(p) for s in STRATEGIES if (p := log_path(processed, args.split, args.genre, s, args.model, args.max_words, args.tag)).exists()}
         if not by:
             raise RuntimeError("no loop logs found for that genre/split/model; run `hd loop run` for each strategy first")
         table = first_pass_table(by)
         short = f"_le{args.max_words}w" if args.max_words else ""
-        stem = f"ablation_prompts_{args.genre}_{args.split}_{args.model.split('/')[-1]}{short}"
+        stem = f"ablation_prompts_{args.genre}_{args.split}_{args.model.split('/')[-1]}{short}{'_' + args.tag if args.tag else ''}"
         table.round(4).to_csv(results / f"{stem}.csv", index=False)
         (results / f"{stem}.md").write_text(to_markdown(table[["strategy", "n", "ours_flagged", "desklib_flagged", "guardrails_ok", "mean_similarity", "mean_reading_grade"]], percent=("ours_flagged", "desklib_flagged", "guardrails_ok")))
         (results / "figures").mkdir(exist_ok=True)

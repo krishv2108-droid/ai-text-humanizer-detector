@@ -6,7 +6,9 @@ Rules that keep the experiment honest:
     never influences a decision, so its numbers stay a fair, unoptimized measurement.
   * "Flagged" means above the frozen 5%-false-positive cutoff for that detector and genre, never 0.5.
   * Guardrails always compare against the ORIGINAL draft, so meaning can't drift a little each pass. A rewrite
-    that fails them is discarded (the next attempt starts from the last accepted draft and is told why).
+    that fails them is never kept. In `repair` mode (default) the next attempt starts FROM that rejected rewrite, which
+    usually has the style we want, and is told exactly what to fix (which sentences it dropped or invented, which
+    numbers changed). With repair off, it restarts from the last accepted draft with a generic note.
   * The kept rewrite is the guardrail-passing iteration with the lowest score from our detector. If none
     passes, the user gets no rewrite, and the summary counts the text as unchanged (still flagged if it was).
   * Every draft gets at least one rewrite, even one our detector already passes.
@@ -22,6 +24,7 @@ from typing import Any, Callable, Iterable
 import pandas as pd
 
 from hd.data.splits import load_split, stable_hash01
+from hd.humanizer.prompts import PROMPT_VERSION
 from hd.llm import RateLimited
 
 
@@ -65,6 +68,8 @@ class LoopResult:
     final: int | None  # iteration kept, or None if no rewrite passed the guardrails
     stop_reason: str  # success | max_iterations | stalled | error: ...
     humanizer_model: str = ""  # which LLM wrote the rewrites; results from different models must not be pooled
+    prompt_version: str = "v1"  # logs written before versioning have no field and are v1; never pool across versions
+    repair: bool = False  # whether failed rewrites were repaired in place (v2 default) or restarted from the last accepted draft
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -74,6 +79,33 @@ def choose_final(steps: list[Step]) -> int | None:
     """The accepted rewrite our detector likes best (earliest on ties)."""
     ok = [s for s in steps[1:] if s.guardrails_ok]
     return min(ok, key=lambda s: (s.ours, s.iteration)).iteration if ok else None
+
+
+def _quoted(sentences: list[str], k: int = 4, width: int = 220) -> str:
+    shown = [f'"{x.strip()[:width]}{"..." if len(x.strip()) > width else ""}"' for x in sentences[:k]]
+    return " ".join(shown) + (f" (and {len(sentences) - k} more)" if len(sentences) > k else "")
+
+
+def repair_note(g) -> str:
+    """A specific repair request built from a failed guardrail report ("you dropped THIS sentence")."""
+    parts = []
+    if g.missing_sentences:
+        parts.append("It left out these sentences of the original. Work each one back in, briefly and in the same voice: " + _quoted(g.missing_sentences))
+    if g.invented_sentences:
+        parts.append("It said things the original does not say. Remove them or fold them into existing sentences: " + _quoted(g.invented_sentences))
+    if g.missing_numbers:
+        parts.append("These numbers of the original were lost or changed; they must appear with exactly these values: " + ", ".join(map(str, g.missing_numbers)))
+    if g.missing_names:
+        parts.append("These names of the original are missing: " + ", ".join(g.missing_names))
+    if g.novel_words:
+        parts.append("These words look like typos or invented words; replace them with ordinary words: " + ", ".join(g.novel_words[:8]))
+    if any(f.startswith("length changed") for f in g.flags):
+        parts.append(f"The length is off (it is {g.length_ratio:.2f}x the original's); aim for about the original's length.")
+    if any(f.startswith(("reading level", "readability")) for f in g.flags):
+        parts.append("The reading level has moved too far from natural prose for this kind of text; write plainly, as an ordinary person would.")
+    if not parts:
+        parts.append("Stay closer to the original's events and ideas.")
+    return "Your previous attempt was rejected by an automatic check. Fix these problems and keep its new voice and rhythm wherever you can:\n- " + "\n- ".join(parts)
 
 
 def _retry_note(flags: list[str]) -> str:
@@ -94,6 +126,7 @@ def run_loop(
     external=None,
     max_iterations: int = 4,
     item_id: str = "",
+    repair: bool = True,
 ) -> LoopResult:
     def ext_score(t: str) -> float | None:
         return None if external is None else float(external.predict_proba([t])[0])
@@ -127,11 +160,13 @@ def run_loop(
             if analysis.prob_ai <= our_cutoff:
                 stop = "success"
                 break
+        elif repair:  # keep the rejected rewrite's style and fix what the checks found wrong with it
+            current, current_analysis, note = analysis.text, analysis, repair_note(guard)
         else:
             note = _retry_note(guard.flags)
 
     return LoopResult(item_id, genre, strategy, our_cutoff, ext_cutoff, steps, choose_final(steps), stop,
-                      getattr(humanizer, "model", ""))  # fmt: skip
+                      getattr(humanizer, "model", ""), PROMPT_VERSION, repair)  # fmt: skip
 
 
 def select_items(corpus: pd.DataFrame, split: str, genre: str, n: int, seed: int, *, unlock_test: bool = False,
@@ -148,10 +183,10 @@ def select_items(corpus: pd.DataFrame, split: str, genre: str, n: int, seed: int
     return part.sort_values("_order").head(n).drop(columns="_order").reset_index(drop=True)
 
 
-def log_path(processed: Path, split: str, genre: str, strategy: str, model: str, max_words: int | None = None) -> Path:
+def log_path(processed: Path, split: str, genre: str, strategy: str, model: str, max_words: int | None = None, tag: str = "") -> Path:
     """Where `hd loop run` writes its log for a given setup (shared with the report commands)."""
     short = f"_le{max_words}w" if max_words else ""
-    return processed / f"loop_{split}_{genre}_{strategy}_{model.split('/')[-1]}{short}.jsonl"
+    return processed / f"loop_{split}_{genre}_{strategy}_{model.split('/')[-1]}{short}{'_' + tag if tag else ''}.jsonl"
 
 
 def run_batch(items: Iterable[dict[str, Any]], out_path: Path, run_one: Callable[[dict[str, Any]], LoopResult]) -> dict[str, Any]:
@@ -191,10 +226,11 @@ def summarize(records: list[dict[str, Any]]) -> pd.DataFrame:
     """One row per (genre, strategy, humanizer model): detection rate before and after, per detector, plus acceptance."""
     rows = []
     frame = pd.DataFrame({"genre": [r["genre"] for r in records], "strategy": [r["strategy"] for r in records],
-                          "model": [r.get("humanizer_model", "") for r in records]})  # fmt: skip
-    for (genre, strategy, model), idx in frame.groupby(["genre", "strategy", "model"]).groups.items():
+                          "model": [r.get("humanizer_model", "") for r in records],
+                          "prompt": [r.get("prompt_version", "v1") for r in records]})  # fmt: skip
+    for (genre, strategy, model, prompt), idx in frame.groupby(["genre", "strategy", "model", "prompt"]).groups.items():
         recs = [records[i] for i in idx]
-        row: dict[str, Any] = {"genre": genre, "strategy": strategy, "model": model, "n": len(recs)}
+        row: dict[str, Any] = {"genre": genre, "strategy": strategy, "model": model, "prompt": prompt, "n": len(recs)}
         row["ours_flagged_before"] = sum(r["steps"][0]["ours"] > r["our_cutoff"] for r in recs) / len(recs)
         row["ours_flagged_after"] = sum(_after(r, "ours") > r["our_cutoff"] for r in recs) / len(recs)
         if all(r["ext_cutoff"] is not None and r["steps"][0]["external"] is not None for r in recs):

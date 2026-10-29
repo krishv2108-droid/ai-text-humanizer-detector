@@ -12,6 +12,10 @@ what makes a rewrite acceptable at all, not part of what is being ablated.
 from __future__ import annotations
 
 STRATEGIES = ("naive", "craft", "feedback", "full")
+# Bump when the wording of any prompt block changes; every loop log records it, so results of different
+# versions are never mixed up. v1: the first pilot (10 validation stories). v2: sentence-coverage and
+# exact-facts requirements, and a moderated rhythm technique (v1 produced staccato caricature).
+PROMPT_VERSION = "v2"
 
 SYSTEM = (
     "You are an experienced human line editor. You rewrite drafts so they read as though a particular "
@@ -21,13 +25,15 @@ SYSTEM = (
 
 CONSTRAINTS = """Hard requirements:
 - Keep the same events, facts, characters, names and order of ideas. Do not add new plot points or claims, and do not drop any.
+- Go through the draft sentence by sentence: every sentence's content must still be present. You may merge, split or reword sentences, but do not skip any.
+- Keep every number, name and place exactly as written (a spelled-out number may become digits, or the reverse, but never change its value).
 - Keep roughly the same length (within about 20%).
 - The result must be clean, coherent, readable prose. Do NOT add typos, misspellings, slang spam or deliberate errors, and do not write gibberish.
 - Plain text only: no headings, bullet points, bold or italics."""
 
 TECHNIQUES = {
     "story": [
-        "Vary sentence length on purpose: use fragments and one-line paragraphs next to long, rambling sentences. Avoid a steady medium rhythm.",
+        "Vary sentence length the way people do: about one sentence in four very short, most of medium length, a few long and winding. Avoid a steady medium rhythm, but do not turn every sentence into a fragment.",
         "Swap abstractions and stated emotions for concrete, specific, slightly unexpected details (a particular object, smell, sound, half-remembered name).",
         "Show feeling through action and subtext. Delete sentences that explain a character's realization or state the moral.",
         "Do not wrap up neatly. End on an image or an unresolved beat, not a summary of what it all meant.",

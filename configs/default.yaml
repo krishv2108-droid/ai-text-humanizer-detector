@@ -68,3 +68,4 @@ guardrails:
   fk_percentiles: [1, 99]
   max_fk_delta: 3.0
   max_novel_rare_rate: 0.01  # share of words that are both new and rare (typo/gibberish signal)
+  max_missing_name_frac: 0.25  # share of the original's names that may vanish (any lost number is flagged)

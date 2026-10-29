@@ -19,6 +19,7 @@ from typing import Any, Protocol
 import numpy as np
 
 from hd.features.text import analyze, sentences
+from hd.humanizer.facts import check_facts
 
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
@@ -54,6 +55,7 @@ class Thresholds:
     # delta rule because humanizing LEGITIMATELY lowers reading level (AI stories read ~8 grades, human ~5).
     fk_range: tuple[float, float] | None = None
     max_novel_rare_rate: float = 0.01  # share of words that are new AND rare (typo/gibberish signal)
+    max_missing_name_frac: float = 0.25  # share of the original's names that may vanish (any lost number is flagged)
     max_mean_surprisal: float | None = None  # GPT-2 ceiling for "incoherent"; set from human text
 
     @classmethod
@@ -78,6 +80,12 @@ class GuardrailReport:
     novel_rare_rate: float
     mean_surprisal: float | None = None
     flags: list[str] = field(default_factory=list)
+    # details that make a repair request specific ("you dropped THIS sentence"), not just "meaning drift"
+    missing_sentences: list[str] = field(default_factory=list)  # original sentences with no counterpart in the rewrite
+    invented_sentences: list[str] = field(default_factory=list)  # rewrite sentences with no counterpart in the original
+    novel_words: list[str] = field(default_factory=list)  # new, rare words (typo/gibberish candidates)
+    missing_numbers: list[int] = field(default_factory=list)
+    missing_names: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -119,13 +127,16 @@ class RareWordCounter:
             tokenizer = AutoTokenizer.from_pretrained("openai-community/gpt2")
         self.tokenizer = tokenizer
 
-    def rate(self, original: str, rewrite: str) -> float:
+    def rare(self, original: str, rewrite: str) -> set[str]:
         known = {w.lower() for w in _WORD.findall(original)}
+        novel = {w.lower() for w in _WORD.findall(rewrite) if w.lower() not in known}
+        return {w for w in novel if len(self.tokenizer(" " + w)["input_ids"]) >= 3}
+
+    def rate(self, original: str, rewrite: str) -> float:
         words = _WORD.findall(rewrite)
         if not words:
             return 0.0
-        novel = {w.lower() for w in words if w.lower() not in known}
-        rare = {w for w in novel if len(self.tokenizer(" " + w)["input_ids"]) >= 3}
+        rare = self.rare(original, rewrite)
         return sum(1 for w in words if w.lower() in rare) / len(words)
 
 
@@ -136,18 +147,23 @@ class GuardrailChecker:
         self.rare_words = rare_words or RareWordCounter()
         self.scorer = scorer  # optional GPT2Scorer for the incoherence ceiling
 
-    def semantic(self, original: str, rewrite: str) -> dict[str, float]:
+    def semantic(self, original: str, rewrite: str) -> dict[str, Any]:
         so, sr = split_sentences(original), split_sentences(rewrite)
         if not so or not sr:
-            return {"similarity": 0.0, "dropped_frac": 1.0, "invented_frac": 1.0}
+            return {"similarity": 0.0, "dropped_frac": 1.0, "invented_frac": 1.0, "missing": so, "invented": sr}
         eo, er = self.embedder.encode(so), self.embedder.encode(sr)
         mo, mr = eo.mean(axis=0), er.mean(axis=0)
         sim = eo @ er.T
+        # Sentence-to-sentence matching. Measured (results/guardrail_restructuring.csv): splitting a sentence into
+        # fragments or merging two is NOT flagged, while deleting or swapping sentences is (AUC 0.94-0.96). Matching
+        # runs of 2-3 sentences instead was tried and is useless (AUC ~0.5: every run matches on a single topic).
+        dropped = sim.max(axis=1) < self.t.dropped_sim  # original sentences matching nothing
+        invented = sim.max(axis=0) < self.t.invented_sim  # rewrite sentences matching nothing
         return {
             "similarity": float(mo @ mr / (np.linalg.norm(mo) * np.linalg.norm(mr))),
-            "dropped_frac": float((sim.max(axis=1) < self.t.dropped_sim).mean()),  # original sentences matching nothing
-            "invented_frac": float((sim.max(axis=0) < self.t.invented_sim).mean()),  # rewrite sentences matching nothing
-        }
+            "dropped_frac": float(dropped.mean()), "invented_frac": float(invented.mean()),
+            "missing": [x for x, d in zip(so, dropped) if d], "invented": [x for x, d in zip(sr, invented) if d],
+        }  # fmt: skip
 
     def check(self, original: str, rewrite: str) -> GuardrailReport:
         sem = self.semantic(original, rewrite)
@@ -155,6 +171,7 @@ class GuardrailChecker:
         n_orig, n_new = len(original.split()), len(rewrite.split())
         ratio = n_new / max(n_orig, 1)
         rare = self.rare_words.rate(original, rewrite)
+        facts = check_facts(original, rewrite)
         surprisal = None
         if self.scorer is not None:
             from hd.features.perplexity import perplexity_features
@@ -165,6 +182,9 @@ class GuardrailChecker:
             fk_grade_before=before["fk_grade"], fk_grade_after=after["fk_grade"],
             reading_ease_before=before["reading_ease"], reading_ease_after=after["reading_ease"],
             novel_rare_rate=rare, mean_surprisal=surprisal,
+            missing_sentences=sem["missing"], invented_sentences=sem["invented"],
+            novel_words=sorted(self.rare_words.rare(original, rewrite)) if rare else [],
+            missing_numbers=facts.missing_numbers, missing_names=facts.missing_names,
         )  # fmt: skip
         t = self.t
         if r.similarity < t.min_doc_similarity:
@@ -180,6 +200,10 @@ class GuardrailChecker:
                 r.flags.append(f"reading level {r.fk_grade_after:.1f} outside the human range {t.fk_range[0]:.1f} to {t.fk_range[1]:.1f}")
         elif abs(r.fk_delta) > t.max_fk_delta:
             r.flags.append(f"readability shifted ({r.fk_delta:+.1f} grade levels)")
+        if facts.missing_numbers:
+            r.flags.append(f"numbers changed or lost ({', '.join(map(str, facts.missing_numbers))})")
+        if facts.missing_name_frac > t.max_missing_name_frac:
+            r.flags.append(f"names missing ({', '.join(facts.missing_names)})")
         if rare > t.max_novel_rare_rate:
             r.flags.append(f"possible typos or gibberish ({rare:.1%} new rare words)")
         if t.max_mean_surprisal is not None and surprisal is not None and surprisal > t.max_mean_surprisal:

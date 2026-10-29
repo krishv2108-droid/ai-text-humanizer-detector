@@ -85,12 +85,42 @@ def _gap(value: float, profile: HumanProfile, genre: str, feature: str, side: st
     return value > profile.q(genre, feature, "p75"), median
 
 
+def _beyond(value: float, profile: HumanProfile, genre: str, feature: str, level: str = "p90") -> tuple[bool, float, float]:
+    """Is `value` above the human `level` (overshoot)? Returns (flag, human median, the level's value)."""
+    if value is None or np.isnan(value):
+        return False, np.nan, np.nan
+    cap = profile.q(genre, feature, level)
+    return value > cap, profile.q(genre, feature, "p50"), cap
+
+
+OVERSHOOT_SEVERITY = 2.0  # corrections of an over-correction outrank everything else (detector effects are <= 1)
+
+
 def diagnose(analysis, profile: HumanProfile, genre: str) -> list[Weakness]:
-    """Weaknesses of a text, most detector-relevant first. `analysis` is an `explain.Analysis`."""
+    """Weaknesses of a text, most important first. `analysis` is an `explain.Analysis`.
+
+    Two-sided: besides "too machine-like" it reports "overshot": a rewrite pushed past the range of real human text
+    (too choppy, too erratic, odd word choices) is told to come back, so the loop converges on human text instead of
+    pushing one way forever.
+    """
     f, out = analysis.features, []
 
-    def add(group: str, evidence: str, fix: str) -> None:
-        out.append(Weakness(group, evidence, fix, float(analysis.group_effects.get(group, 0.0))))
+    def add(group: str, evidence: str, fix: str, severity: float | None = None) -> None:
+        out.append(Weakness(group, evidence, fix, float(analysis.group_effects.get(group, 0.0)) if severity is None else severity))
+
+    over, med, cap = _beyond(f["short_sent_frac"], profile, genre, "short_sent_frac")
+    if over:
+        add("rhythm", f"Too choppy: {f['short_sent_frac']:.0%} of sentences are 5 words or fewer (human {genre} text typically {med:.0%}, rarely above {cap:.0%}).",
+            "Merge some fragments into full sentences. Keep a few short ones for emphasis, but most sentences should carry a subject and a verb.",
+            OVERSHOOT_SEVERITY)  # fmt: skip
+    over, med, cap = _beyond(f["sent_len_cv"], profile, genre, "sent_len_cv")
+    if over:
+        add("rhythm", f"Sentence lengths swing too wildly (variation {f['sent_len_cv']:.2f}; human typically {med:.2f}, rarely above {cap:.2f}).",
+            "Even it out a little: fewer extreme one-word lines next to very long sentences.", OVERSHOOT_SEVERITY)  # fmt: skip
+    over, med, cap = _beyond(f["mean_surprisal"], profile, genre, "mean_surprisal")
+    if over:
+        add("perplexity", f"Some word choices are odd or showy for this kind of text (a language model finds the wording more surprising than {cap:.2f} bits; human typically {med:.2f}).",
+            "Swap the strangest word choices for plainer, exact ones. Unusual is good; obscure or forced is not.", OVERSHOOT_SEVERITY)  # fmt: skip
 
     low, med = _gap(f["sent_len_cv"], profile, genre, "sent_len_cv", "low")
     if low:

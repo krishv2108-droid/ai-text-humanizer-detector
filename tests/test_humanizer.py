@@ -254,6 +254,80 @@ def test_human_fk_range_comes_from_train_split_human_text_only(tmp_path, monkeyp
     assert human_fk_range(cfg, "casual") is None
 
 
+def test_guardrails_catch_changed_numbers_and_say_which():
+    loose = dict(min_doc_similarity=-1, max_dropped_frac=1, max_invented_frac=1, length_ratio=(0, 99), fk_range=(-99, 99))
+    changed = checker(**loose).check(STORY, STORY.replace("forty", "fourteen"))
+    assert changed.missing_numbers == [40] and any(f.startswith("numbers changed or lost (40)") for f in changed.flags)
+    assert checker(**loose).check(STORY, STORY.replace("forty", "40")).ok  # same value spelled as digits is fine
+
+
+def test_guardrails_report_exactly_which_sentences_were_dropped_or_invented():
+    dropped = STORY.replace("She lit the lamp and waited. ", "")
+    r = checker().check(STORY, dropped)
+    assert r.missing_sentences == ["She lit the lamp and waited."] and r.invented_sentences == []
+    invented = STORY + " Quantum cheese negotiations continued indefinitely."  # no vocabulary in common with the story
+    r = checker().check(STORY, invented)
+    assert r.invented_sentences == ["Quantum cheese negotiations continued indefinitely."] and r.missing_sentences == []
+    typo = inject_typos(STORY, 1.0, random.Random(0))
+    assert checker().check(STORY, typo).novel_words  # the report lists the suspect words, not just a rate
+
+
+def test_diagnose_tells_an_overshot_rewrite_to_come_back():
+    profile = make_profile()  # human p90 is 1.4 for every feature
+    choppy = diagnose(make_analysis(short_sent_frac=1.6), profile, "story")
+    assert choppy[0].evidence.startswith("Too choppy") and "Merge some fragments" in choppy[0].fix
+    assert choppy[0].severity == 2.0  # a correction outranks every ordinary weakness
+    assert diagnose(make_analysis(short_sent_frac=1.39), profile, "story") == []  # inside the human range: leave it alone
+    odd = diagnose(make_analysis(mean_surprisal=1.8), profile, "story")
+    assert any("odd or showy" in w.evidence for w in odd)
+    wild = diagnose(make_analysis(sent_len_cv=1.9), profile, "story")
+    assert any("swing too wildly" in w.evidence for w in wild)
+    both = diagnose(make_analysis(short_sent_frac=1.6, sent_len_cv=0.5), profile, "story")  # choppy AND otherwise AI-like cues
+    assert both[0].evidence.startswith("Too choppy")
+
+
+def test_every_strategy_demands_full_coverage_and_exact_facts_and_the_version_is_recorded():
+    from hd.humanizer.prompts import PROMPT_VERSION
+
+    fb = "An automated detector scored this draft 90% likely to be AI-written."
+    for strategy in STRATEGIES:
+        user = build_prompt("Some draft.", "story", strategy, fb if strategy in ("feedback", "full") else None)[1]
+        assert "sentence by sentence" in user and "exactly as written" in user
+    assert "do not turn every sentence into a fragment" in build_prompt("Some draft.", "story", "craft")[1]
+    assert PROMPT_VERSION == "v2"
+
+
+def test_restructuring_transforms_preserve_every_word_and_damage_transforms_do_not():
+    from hd.humanizer.calibrate import coverage_scenarios, merge_pairs, split_into_fragments
+
+    text = ("The old lighthouse stood at the edge of the cliff, its weathered stones bearing silent witness to countless storms. "
+            "Maria climbed the winding staircase, and her heart was heavy with loss; however, she kept going. "
+            "At the top she stopped. The sea was wide and grey. Nobody was waiting for her there.")  # fmt: skip
+    links = {"and", "but", "so", "yet", "while", "as", "because"}
+    words = lambda t: sorted(w for w in re.findall(r"[a-z']+", t.lower()) if w not in links)  # noqa: E731
+    split, merged = split_into_fragments(text), merge_pairs(text)
+    assert words(split) == words(text)  # no content word lost: only punctuation, capitals and linking conjunctions change
+    assert len(re.findall(r"[.!?]", split)) > len(re.findall(r"[.!?]", text))  # more, shorter sentences
+    assert words(merged) == words(text) and len(re.findall(r"[.!?]", merged)) < len(re.findall(r"[.!?]", text))
+    scenarios = coverage_scenarios(text, [text.replace("lighthouse", "harbour")] * 4, random.Random(1))
+    assert scenarios["identical"] == text and len(scenarios["drop30"].split()) < len(text.split())
+
+
+def test_restructuring_summary_reports_separation_and_flag_rates():
+    from hd.humanizer.calibrate import summarize_restructuring
+
+    rows = []
+    for i in range(20):
+        for s in ("identical", "split", "merge"):
+            rows.append({"scenario": s, "id": i, "dropped_frac": 0.0, "invented_frac": 0.02 * (i % 3), "similarity": 0.99})
+        rows.append({"scenario": "drop30", "id": i, "dropped_frac": 0.3, "invented_frac": 0.0, "similarity": 0.9})
+        rows.append({"scenario": "swap30", "id": i, "dropped_frac": 0.2, "invented_frac": 0.3, "similarity": 0.8})
+    t = summarize_restructuring(pd.DataFrame(rows), max_dropped=0.2, max_invented=0.25).set_index("damage")
+    assert t.loc["drop30", "auc_vs_restructuring"] == 1.0 and t.loc["drop30", "flagged_when_damaged"] == 1.0
+    assert t.loc["drop30", "flagged_when_split"] == 0.0 and t.loc["swap30", "flagged_when_merge"] == 0.0  # restructuring is not punished
+    assert t.loc["swap30", "flagged_when_damaged"] == 1.0 and t.loc["swap30", "restructuring_p95"] == pytest.approx(0.04)
+
+
 def test_inject_typos_is_deterministic_and_respects_rate():
     a, b = inject_typos(STORY, 0.5, random.Random(1)), inject_typos(STORY, 0.5, random.Random(1))
     assert a == b and inject_typos(STORY, 0.0, random.Random(1)) == STORY
