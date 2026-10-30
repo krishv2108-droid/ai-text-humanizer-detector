@@ -38,8 +38,9 @@ What we learned (details and limitations in `reports/FINDINGS.md`):
 - **Humanizer v2 (repair mode, two-sided feedback, number-and-name guard) did not measurably raise that 32%.** On 12 train
   stories it kept more meaning (0.90) and never lost a number, but fooled both detectors on 2 of 12 (5-45%); a further wording
   lever (v3) was tried and reverted (no effect, paired p = 0.68). With n = 12 these runs cannot rule out a small difference.
-- **Desklib steering is built, not yet measured.** `hd loop run --steer-desklib` lets desklib steer as well as our detector, judged
-  by fakespot. The free qwen quota ran out after 3 steered stories, so there is no result yet.
+- **Letting desklib steer did not help the independent judge.** On 21 validation stories (the quota ended the run there), the steered
+  v2 loop fooled desklib 9 times against 6 for the v1 baseline, but fooled fakespot, which never steers, 7 times against 11 (not
+  significant, paired p = 0.34), at 2.2 times the cost. Evasion of a detector you steer on does not transfer.
 
 First-pass comparison of prompt strategies (10 validation stories, `qwen3.8-27b`, prompt v1, before guardrails; still a pilot):
 

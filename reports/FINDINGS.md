@@ -76,13 +76,28 @@ fakespot on **44% (29-61%)** of stories, versus 32% for desklib; all three detec
 transfers: of 40 rewrites that fool desklib, 80% also fool fakespot, while of 59 that desklib still flags, 36% fool fakespot
 (Spearman 0.70 between the two on 99 rewrites). That transfer is the reason steering with desklib is a sound design, judged by
 fakespot. `--steer-desklib` is implemented and tested (the loop stops only when both ours and desklib pass, keeps the rewrite with the
-lowest worst-case score, and tells a rewrite desklib still flags to be bolder; fakespot never decides anything), but **it has not been
-measured on validation yet**. Development run on the same 12 train stories (qwen, prompt v2): with desklib steering, desklib is fooled on 5
-of 12 stories instead of 2, but fakespot (the judge) on 4 instead of 3 (9-53% vs 14-61%), and all three on 3 instead of 2. The steered
-detector improves; whether that generalises to the judge is not established at n = 12 (one story). It costs twice the tokens (5,329 vs
-2,545 per story), the kept rewrites keep slightly less meaning (0.88 vs 0.90), and 7 of 12 loops ended at the iteration cap. The settings
-for the validation run were fixed before it started: v2 prompt, repair on, desklib steering, up to 4 rewrites, the same 34 stories as
-the v1 baseline, fakespot as judge.
+lowest worst-case score, and tells a rewrite desklib still flags to be bolder; fakespot never decides anything).
+
+**Desklib steering: no demonstrated gain on the judge.** Development run, 12 train stories (qwen, prompt v2): desklib fooled on 5 of 12
+instead of 2, fakespot on 4 instead of 3. Validation run (settings fixed before it started: v2 prompt, repair on, desklib steering, up to
+4 rewrites, fakespot as judge): the daily quota ended it at **21 of the 34 stories** (the first 21 in hash order; the other 13 were not
+run). Paired with the v1 baseline on exactly those 21 stories:
+
+| Same 21 validation stories | v1 baseline (ours steers) | v2 + desklib steers |
+|---|---|---|
+| Fools our detector | 21 | 18 |
+| Fools desklib (steered in the v2 run) | 6 (14-50%) | 9 (24-63%) |
+| **Fools fakespot (the judge; never steers)** | **11 (32-72%)** | **7 (17-55%)** |
+| Fools all three | 5 (11-45%) | 4 (8-40%) |
+| Mean meaning similarity of the kept rewrite | 0.87 | 0.90 |
+| Tokens per story | 2,656 | 5,822 |
+
+Per story on the judge: fooled in both runs 4, only by the steered run 3, only by the baseline 7 (sign test p = 0.34). So steering raised the
+steered detector's evasion by about 14 points (not significant) without raising the judge's, at 2.2 times the cost. The two runs differ in the
+prompt version and repair mode as well as in steering, so this is a comparison of two system versions, not a clean test of steering alone;
+the cleaner paired test (same train stories, only steering changed) gave desklib 2 -> 5 and the judge 3 -> 4. The most likely reading is
+the fidelity frontier below: the v2 runs keep more meaning (0.90 vs 0.87), and a rewrite that keeps more of the story is flagged more
+often by every detector. Desklib steering is therefore not recommended as a default.
 
 **Why it plateaus: fidelity versus evasion** (`results/frontier_story_replay_v1_v2dev.csv`; 100 rewrites with desklib scores):
 
