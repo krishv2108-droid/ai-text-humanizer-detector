@@ -209,6 +209,8 @@ def _run_detector(args: argparse.Namespace, cfg: dict) -> int:
 
 
 def _run_llm(args: argparse.Namespace, cfg: dict) -> int:
+    import hashlib
+
     from hd.llm import PROVIDERS, OpenAICompatClient, api_keys
 
     llm = cfg["llm"]
@@ -220,7 +222,8 @@ def _run_llm(args: argparse.Namespace, cfg: dict) -> int:
         return 0
     for number, key in enumerate(keys, 1):
         client = OpenAICompatClient(PROVIDERS[provider]["base_url"], key, max_retries=2, seed=cfg.get("seed"))
-        print(f"\n=== key {number} of {len(keys)} ({len(key)} characters; the key itself is never printed) ===")
+        fingerprint = hashlib.sha256(key.encode()).hexdigest()[:8]  # lets you tell keys apart without revealing them
+        print(f"\n=== key {number} of {len(keys)}: fingerprint {fingerprint} ({len(key)} characters; the key itself is never printed) ===")
         for role in ("generation_model", "humanizer_model"):
             model = llm[role]
             if role == "humanizer_model" and model == llm["generation_model"]:
