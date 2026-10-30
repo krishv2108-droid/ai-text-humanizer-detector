@@ -30,6 +30,7 @@ ml = ["torch>=2.2", "transformers>=4.40"]
 embed = ["sentence-transformers>=3.0"]
 llm = ["anthropic>=0.40", "openai>=1.50"]
 app = ["streamlit>=1.35"]
+local = ["mlx-lm>=0.20"]  # run an open model on Apple silicon (no API key)
 
 [dependency-groups]
 dev = ["pytest>=8.0"]

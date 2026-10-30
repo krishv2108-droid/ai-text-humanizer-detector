@@ -371,3 +371,74 @@ def test_a_cached_answer_is_reused_whichever_key_produced_it(tmp_path):
     client = CachedClient(RotatingClient([a, b], clock=TickClock()), tmp_path)
     assert client.complete(**CALL).text == "story" and b.calls == 1
     assert client.complete(**CALL).text == "story" and (a.calls, b.calls) == (1, 1)  # served from the cache: no key was touched
+
+
+# ---- the local (MLX) provider: no key, no network --------------------------------------------------------------------------
+
+def _fake_mlx(monkeypatch, template_rejects_system=False):
+    import sys
+    import types
+
+    seen = {}
+
+    class Tok:
+        def apply_chat_template(self, messages, add_generation_prompt, tokenize):
+            if template_rejects_system and messages[0]["role"] == "system":
+                raise ValueError("roles must alternate")
+            seen["messages"] = messages
+            return "|".join(f"{m['role']}:{m['content']}" for m in messages)
+
+        def encode(self, text):
+            return text.split()
+
+    def generate(net, tok, prompt, max_tokens, sampler, verbose):
+        seen["prompt"], seen["max_tokens"], seen["sampler"] = prompt, max_tokens, sampler
+        return "one two three"
+
+    core = types.ModuleType("mlx.core")
+    core.random = types.SimpleNamespace(seed=lambda s: seen.__setitem__("seed", s))
+    root, mlx_lm, sample = types.ModuleType("mlx"), types.ModuleType("mlx_lm"), types.ModuleType("mlx_lm.sample_utils")
+    root.core = core
+    mlx_lm.load, mlx_lm.generate = (lambda path: (object(), Tok())), generate
+    sample.make_sampler = lambda temp, top_p: ("sampler", temp, top_p)
+    for name, mod in (("mlx", root), ("mlx.core", core), ("mlx_lm", mlx_lm), ("mlx_lm.sample_utils", sample)):
+        monkeypatch.setitem(sys.modules, name, mod)
+    return seen
+
+
+def test_local_client_formats_the_chat_samples_and_reports_tokens(monkeypatch, tmp_path):
+    from hd.llm import MLXClient
+
+    seen = _fake_mlx(monkeypatch)
+    (tmp_path / "m").mkdir()
+    out = MLXClient(temperature=0.6, top_p=0.8, seed=7).complete(system="S", prompt="P", model=str(tmp_path / "m"), max_tokens=50)
+    assert out.text == "one two three" and out.output_tokens == 3 and out.input_tokens == 1 and out.stop_reason == "end_turn"
+    assert seen["messages"] == [{"role": "system", "content": "S"}, {"role": "user", "content": "P"}]
+    assert seen["sampler"] == ("sampler", 0.6, 0.8) and seen["seed"] == 7 and seen["max_tokens"] == 50
+    assert MLXClient().complete(system="S", prompt="P", model=str(tmp_path / "m"), max_tokens=3).stop_reason == "max_tokens"  # filled the budget
+
+
+def test_local_client_folds_the_system_prompt_in_when_the_template_rejects_it(monkeypatch, tmp_path):
+    from hd.llm import MLXClient
+
+    seen = _fake_mlx(monkeypatch, template_rejects_system=True)
+    (tmp_path / "m").mkdir()
+    MLXClient().complete(system="S", prompt="P", model=str(tmp_path / "m"), max_tokens=50)
+    assert seen["messages"] == [{"role": "user", "content": "S\n\nP"}]
+
+
+def test_local_client_names_a_missing_model(monkeypatch, tmp_path):
+    from hd.llm import MLXClient
+
+    _fake_mlx(monkeypatch)
+    with pytest.raises(RuntimeError, match="not found"):
+        MLXClient().complete(system="S", prompt="P", model=str(tmp_path / "nope"), max_tokens=5)
+
+
+def test_make_client_local_needs_no_key_and_is_cached(monkeypatch, tmp_path):
+    from hd.llm import MLXClient
+
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    client = make_client({"seed": 3, "llm": {"provider": "local", "cache": True, "temperature": 0.5}}, tmp_path)
+    assert type(client).__name__ == "CachedClient" and isinstance(client.inner, MLXClient) and client.inner.temperature == 0.5
+    assert isinstance(make_client({"seed": 3, "llm": {"provider": "local", "cache": False}}, tmp_path), MLXClient)

@@ -231,6 +231,15 @@ humanizer's fingerprint rather than "human-like writing"; a different rewriter h
 this is a defense against past attacks; whether a humanizer that adapts to the retrained detector gets past it (round 2) has not been run. Validation has only 50 human stories,
 and the cutoff and the false-positive figure come from the same 50. Treat 96% as an upper bound for unseen rewriters until it is checked on the test split or on another humanizer.
 
+### 2g. A local open model as the humanizer (development, negative result)
+
+To remove the API quota, `mistral-7b-instruct-v0.3-4bit` (4.1 GB, Apache-2.0) was run on the author's Mac through MLX (`--provider local`, about 22 tokens per second, no key and no cost per
+call) with the same v2 prompts, guardrails and loop as the `qwen3.8-27b` runs. On the same 12 TRAIN stories it did worse than qwen: **0 of 12** stories ended with a kept rewrite that fooled our
+detector and desklib (qwen: 2 of 12), and 0 of 12 fooled all three. Our detector still flagged all 12 and desklib 11 of 12. The rewrites are near-copies (similarity 0.94 to 0.99, like the
+gpt-oss models), only 23 of 38 attempts passed the guardrails (9 attempts flagged for typos or gibberish, several runs ended on a cut-off reply), and 3 stories got no rewrite at all.
+A 7B model follows the long constraint prompt too loosely to restyle a story, so there was no variety to choose among and unlimited samples would not have helped. This closes the
+"free local model" route for 7B-class models on 16 GB; a larger model was not tried.
+
 ## 3. Limitations
 
 - **One generator per genre, one human source per genre.** HC3's AI side is ChatGPT from December 2022; the story AI side is

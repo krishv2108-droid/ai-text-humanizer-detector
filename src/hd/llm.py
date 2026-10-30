@@ -291,6 +291,50 @@ class CachedClient:
         return response
 
 
+class MLXClient:
+    """Runs an open model on this Mac through MLX (Apple silicon): no key, no quota, no cost per call.
+
+    `model` is a directory name under models/external/ (or any path). Sampling is on (temperature, top_p) because rewriting
+    wants variety; `seed` makes a run reproducible. Results are cached by prompt like any other client, so a rerun of the
+    same prompt returns the same text.
+    """
+
+    def __init__(self, temperature: float = 0.7, top_p: float = 0.9, seed: int | None = None):
+        self.temperature, self.top_p, self.seed = temperature, top_p, seed
+        self._loaded: dict[str, tuple[Any, Any]] = {}
+
+    def _load(self, model: str):
+        if model not in self._loaded:
+            from mlx_lm import load
+
+            from hd.config import PROJECT_ROOT
+
+            path = Path(model)
+            if not path.is_absolute():
+                path = PROJECT_ROOT / "models" / "external" / model
+            if not path.exists():
+                raise RuntimeError(f"local model not found at {path}; download it into models/external/ first")
+            self._loaded[model] = load(str(path))
+        return self._loaded[model]
+
+    def complete(self, *, system, prompt, model, max_tokens, effort=None) -> LLMResponse:
+        import mlx.core as mx
+        from mlx_lm import generate
+        from mlx_lm.sample_utils import make_sampler
+
+        net, tok = self._load(model)
+        messages = [{"role": "system", "content": system}, {"role": "user", "content": prompt}]
+        try:
+            text = tok.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
+        except Exception:  # some chat templates reject a system role: fold it into the user turn
+            text = tok.apply_chat_template([{"role": "user", "content": f"{system}\n\n{prompt}"}], add_generation_prompt=True, tokenize=False)
+        if self.seed is not None:
+            mx.random.seed(self.seed)
+        out = generate(net, tok, prompt=text, max_tokens=max_tokens, sampler=make_sampler(temp=self.temperature, top_p=self.top_p), verbose=False)
+        n_in, n_out = len(tok.encode(text)), len(tok.encode(out))
+        return LLMResponse(text=out, input_tokens=n_in, output_tokens=n_out, stop_reason="max_tokens" if n_out >= max_tokens else "end_turn")
+
+
 class MockClient:
     """Deterministic offline stand-in. `responder(prompt) -> text`, default echoes the prompt."""
 
@@ -382,6 +426,9 @@ def make_client(cfg: dict, cache_dir: Path) -> LLMClient:
     """The configured provider's client, wrapped in the disk cache. Fails early if no key is set."""
     llm = cfg["llm"]
     provider = llm.get("provider", "anthropic")
+    if provider == "local":
+        inner_local: LLMClient = MLXClient(llm.get("temperature", 0.7), llm.get("top_p", 0.9), seed=cfg.get("seed"))
+        return CachedClient(inner_local, cache_dir) if llm["cache"] else inner_local
     keys = api_keys(provider)  # validates provider + the primary key before anything is built
     if provider == "anthropic":
         inner: LLMClient = AnthropicClient(max_retries=llm["max_retries"])

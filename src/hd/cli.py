@@ -60,6 +60,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--n", type=int, default=10, help="how many AI texts (a larger n extends the same sample)")
     run.add_argument("--strategy", choices=["naive", "craft", "feedback", "full", "surgery"], default="full", help="surgery rewrites only the most machine-looking sentences (desklib steers; needs desklib)")
     run.add_argument("--model", help="humanizer model (default: llm.humanizer_model); each Groq model has its own daily token pool")
+    run.add_argument("--provider", choices=["groq", "anthropic", "local"], help="override llm.provider; 'local' runs a model from models/external/ on this Mac (no key, no quota; --model is its directory name)")
     run.add_argument("--max-words", type=int, help="only texts up to this many words (needed for models with small output caps)")
     run.add_argument("--max-iterations", type=int, help="default: loop.max_iterations from the config")
     run.add_argument("--no-external", action="store_true", help="skip the independent detector (faster; fewer claims)")
@@ -352,6 +353,8 @@ def _run_loop(args: argparse.Namespace, cfg: dict) -> int:
     our_cut = cutoff_for(thresholds, "ours", args.genre)
     detector = Detector.load(cfg)
     profile = HumanProfile.load_or_build(cfg, detector.scorer)
+    if args.provider:
+        cfg["llm"]["provider"] = args.provider
     llm = cfg["llm"]
     model = args.model or llm["humanizer_model"]
     humanizer = Humanizer(make_client(cfg, resolve_path(cfg, "cache")), model, profile, llm["humanizer_effort"], args.strength)
