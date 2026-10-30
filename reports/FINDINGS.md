@@ -99,6 +99,20 @@ the cleaner paired test (same train stories, only steering changed) gave desklib
 the fidelity frontier below: the v2 runs keep more meaning (0.90 vs 0.87), and a rewrite that keeps more of the story is flagged more
 often by every detector. Desklib steering is therefore not recommended as a default.
 
+**Rewrite strength (development, 12 train stories, ours steers only).** `faithful` keeps every sentence's content (similarity at least
+0.80, dropped sentences at most 20%); `strong` may compress or drop minor descriptive detail (at least 0.72, at most 30%); numbers, names,
+typos, reading level and length are checked identically in both. The first strong prompt asked for "plainer, everyday words" and sentences
+"under 6 words": 13 of its 15 rejected attempts then fell below the human reading-level floor (grade 0.9-2.2, childlike prose) and were
+discarded, so it fooled all three detectors on 1 of 12 stories (faithful: 2 of 12). I did not loosen the guardrail (that would have
+accepted rewrites that win by sounding childish); I rewrote the strong prompt to ask for plain but not childlike prose. With it, all three
+detectors were fooled on 4 of 12 (14-61%), desklib on 6 of 12 and fakespot on 4 of 12 (25-75%, 14-61%), at meaning similarity 0.89. n = 12 and the
+intervals overlap, so this selects a candidate; it is not a result. This was the only strong-prompt revision made after seeing results.
+
+**Validation protocol fixed before the validation runs** (no further prompt or guardrail changes): the 34 validation stories of at most
+400 words, qwen3.8-27b, `full` strategy, our detector steers only (desklib steering did not help), fakespot judges, up to 4 rewrites,
+once in `faithful` mode and once in `strong` mode (the revised "s2" prompt); results are reported separately and paired on the stories
+both runs completed. Logs of the first strong prompt are kept as `*_strong_s1.jsonl`.
+
 **Why it plateaus: fidelity versus evasion** (`results/frontier_story_replay_v1_v2dev.csv`; 100 rewrites with desklib scores):
 
 | Meaning similarity of the rewrite | Fooled desklib | Passed the guardrails |

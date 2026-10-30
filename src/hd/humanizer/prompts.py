@@ -44,9 +44,11 @@ CONSTRAINTS_STRONG = """Hard requirements:
 - The result must be clean, coherent, readable prose. Do NOT add typos, misspellings, slang spam or deliberate errors, and do not write gibberish.
 - Plain text only: no headings, bullet points, bold or italics."""
 
+# Strong-mode prompt, 2nd version ("s2"). The 1st ("s1": "plainer, everyday words" + sentences "under 6 words") pushed 13 of 15 rejected
+# attempts below the human reading-level floor (grade 0.9-2.2): childlike prose, which the reading-level guardrail rightly rejects.
 TECHNIQUES_STRONG_STORY = [
-    "Tell it the way a different person would: in plainer, everyday words, with your own phrasing and your own images instead of the draft's.",
-    "Vary sentence length boldly: about one sentence in three very short (under 6 words), most of medium length, a few long. Do not turn every sentence into a fragment.",
+    "Tell it the way a different person would, with your own phrasing and your own images instead of the draft's. Keep the wording natural and plain, but not childlike: no baby-talk sentences, and keep adult vocabulary where the story needs it.",
+    "Vary sentence length boldly: about one sentence in three short (under 8 words), most of medium length, a few long. Do not turn every sentence into a fragment.",
 ]
 
 TECHNIQUES = {

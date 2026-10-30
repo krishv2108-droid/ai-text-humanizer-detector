@@ -336,6 +336,7 @@ def test_strong_strength_changes_the_prompt_but_keeps_facts_protected():
     assert "sentence by sentence" in faithful and "sentence by sentence" not in strong  # strong may drop minor detail
     assert "compress, merge or drop minor descriptive details" in strong and "compress" not in faithful
     assert "one sentence in three" in strong and "one sentence in four" in faithful  # the rhythm technique is the bolder one
+    assert "not childlike" in strong and "childlike" not in faithful  # strong must not be allowed to drift below the human reading level
     for text in (faithful, strong):  # numbers and names are never negotiable
         assert "every number" in text and "exactly as written" in text and "Do NOT add typos" in text
     assert "Do not invent new plot points" in strong
