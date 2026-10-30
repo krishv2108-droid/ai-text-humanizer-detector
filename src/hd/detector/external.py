@@ -134,3 +134,55 @@ class FakespotDetector:
             probs = torch.softmax(self.model(**enc).logits.float(), dim=-1)[:, self.ai_index]
             out[idx] = probs.cpu().numpy()
         return out
+
+
+# ---- two more independent judges, loaded from local directories (downloaded once into models/external/) --------------------
+
+
+class _LocalSoftmaxDetector:
+    """A 2-class text classifier on disk whose class `ai_index` means "AI-written". Judge only; never trains or steers anything.
+
+    The weights were fetched with `snapshot_download` into their own directory and load through PyTorch's default safe
+    unpickler (`weights_only=True`), which refuses anything that is not plain tensors.
+    """
+
+    name = ""
+    ai_index = 0
+    directory = ""
+
+    def __init__(self, path: str | None = None, max_len: int = 512, batch_size: int = 8, device: str | None = None):
+        from transformers import AutoModelForSequenceClassification
+
+        from hd.config import PROJECT_ROOT
+
+        path = path or str(PROJECT_ROOT / "models" / "external" / self.directory)
+        self.device = device or pick_device()
+        self.max_len, self.batch_size = max_len, batch_size
+        self.tokenizer = AutoTokenizer.from_pretrained(path)
+        self.model = AutoModelForSequenceClassification.from_pretrained(path).to(self.device).eval()
+
+    @torch.no_grad()
+    def predict_proba(self, texts: list[str]) -> np.ndarray:
+        order = np.argsort([len(t) for t in texts])
+        out = np.zeros(len(texts))
+        for start in range(0, len(texts), self.batch_size):
+            idx = order[start : start + self.batch_size]
+            enc = self.tokenizer([texts[i] for i in idx], padding=True, truncation=True, max_length=self.max_len, return_tensors="pt").to(self.device)
+            enc.pop("token_type_ids", None)
+            out[idx] = torch.softmax(self.model(**enc).logits.float(), dim=-1)[:, self.ai_index].cpu().numpy()
+        return out
+
+
+class MageDetector(_LocalSoftmaxDetector):
+    """`yaful/MAGE` (Apache-2.0): Longformer trained on text from many generators and domains, stories included. Class 0 = machine-written."""
+
+    name, directory, ai_index = "mage", "mage", 0
+
+
+class RadarDetector(_LocalSoftmaxDetector):
+    """`TrustSafeAI/RADAR-Vicuna-7B` (non-commercial license): RoBERTa-large trained against a paraphraser, i.e. built to resist rewriting.
+
+    Trained on text from Vicuna-7B continuing OpenWebText, so story text is out of its domain; its AUC on our validation texts says how useful it is here.
+    """
+
+    name, directory, ai_index = "radar", "radar", 0

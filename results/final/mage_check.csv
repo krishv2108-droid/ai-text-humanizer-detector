@@ -1,0 +1,8 @@
+split,texts,n,flagged,rate,lo,hi,mean_p_ai
+val,human stories (false positives),50,3,0.06,0.021,0.162,0.141
+val,raw AI stories,50,27,0.54,0.404,0.67,0.84
+val,v2 faithful: text delivered (34 stories),34,7,0.206,0.103,0.368,0.368
+val,v1 baseline: text delivered (34 stories),34,3,0.088,0.03,0.23,0.119
+test,human stories (false positives),39,3,0.077,0.027,0.203,0.155
+test,raw AI stories,39,22,0.564,0.41,0.707,0.772
+test,v2 faithful: text delivered (26 stories),26,2,0.077,0.021,0.241,0.287

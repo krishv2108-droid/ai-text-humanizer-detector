@@ -55,6 +55,10 @@ What we learned (details and limitations in `reports/FINDINGS.md`):
   (`reports/FINDINGS.md` sections 2f and 4f). Caveat: one humanizer; not yet tested against a rewriter that adapts to the new detector.
 - **Surgery and a flat "under 30%" bar did not work** (`reports/FINDINGS.md` section 2e): editing only the most machine-looking sentences kept meaning (0.95) but moved no detector.
 
+- **Two more detectors.** MAGE (Apache-2.0) is lenient but usable: at a 5% false-positive cutoff it flags only 56% of raw AI test stories and 8% (2 of 26) of the humanizer's
+  output, so the humanizer does best against it. Adding it leaves the all-detector rate at **2 of 26 test stories (8%)**. RADAR, built to resist paraphrasing, cannot separate
+  our AI stories from human ones at all (AUC 0.45) and is dropped (`reports/FINDINGS.md` section 4g).
+
 First-pass comparison of prompt strategies (10 validation stories, `qwen3.8-27b`, prompt v1, before guardrails; still a pilot):
 
 | Strategy | Ours flagged | desklib flagged | Passes guardrails | Meaning similarity |

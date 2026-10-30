@@ -369,6 +369,29 @@ texts. Its false-positive rate is 5.1% (2 of 39), consistent with the 5% target 
 (`qwen3.8-27b`) and one prompt family produced all the training and test rewrites, so this shows the detector learned that humanizer's output, not that it would catch a
 different rewriter; the rewrites were produced against the old detector; and 26 stories keep every interval wide.
 
+### 4g. Two more independent detectors (MAGE usable, RADAR not)
+
+On request, two further open-source detectors were downloaded (`yaful/MAGE`, 595 MB, Apache-2.0; `TrustSafeAI/RADAR-Vicuna-7B`, 1,422 MB, non-commercial license) into
+`models/external/` and loaded with PyTorch's safe unpickler. They only judge; they steered and trained nothing. Cutoffs are 5%-false-positive points on validation human stories.
+
+- **RADAR is unusable here and is dropped.** Its AUC separating raw AI from human validation stories is 0.45 (chance). It was trained on Vicuna text continuing OpenWebText, and
+  stories are far outside that domain. I did not flip its labels to make it look better.
+- **MAGE is a usable but lenient judge**: AUC 0.92 on validation stories, and at its 5%-false-positive cutoff (0.999) it flags only 54% of raw AI validation stories and 56% of raw AI test stories.
+
+| MAGE flagged | Validation | Test |
+|---|---|---|
+| Human stories (false positives) | 6% (3 of 50) | 8% (3 of 39) |
+| Raw AI stories | 54% (27 of 50) | 56% (22 of 39) |
+| Text delivered by the faithful humanizer | **21% (7 of 34)** | **8% (2 of 26)** |
+| Of the raw stories it did flag (16 / 11), rewrites that slipped past | 9 | 9 |
+
+Against MAGE the humanizer does better than against any other independent detector: the average MAGE P(AI) falls from 0.77 to 0.29 on the test stories. The all-detector rate does not
+change, because MAGE is lenient and never the binding constraint: fooling ours + desklib + fakespot + MAGE is 5 of 34 on validation (15%; 6-30%) and **2 of 26 on test (8%; 2-24%)**,
+the same stories as without MAGE. So "the best it can do" against every independent detector we have is still about 8-15% on short stories.
+
+Test-split reads so far, all logged and each disclosed: the main evaluation (4a-4b), the retrained detector (4f), and this check (scoring MAGE on the test human and raw AI stories; its
+rewrite scores come from the existing test log). Cutoffs were fixed on validation beforehand and nothing was changed after looking.
+
 ## Reproduce
 
 ```bash
