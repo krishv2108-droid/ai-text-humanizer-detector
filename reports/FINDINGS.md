@@ -189,8 +189,8 @@ splices them back in place and leaves everything else byte for byte unchanged; d
 
 Result on 12 TRAIN stories (development only, `qwen3.8-27b`, up to 4 passes): it kept more meaning (mean similarity 0.95 against 0.90 for
 whole-text rewriting) but did not move the detectors: desklib still flagged 12 of 12 (every kept rewrite scored 0.76 to 1.00), our own detector still
-flagged 7 of 12 (against 1 of 8 in the whole-text runs), fakespot 8 of 12. **0 of 12 stories ended under 30% on ours and desklib**
-(95% interval 0-24%). Most runs ended "exhausted": every sentence had been rewritten once and desklib's score had not moved.
+flagged 7 of 12 (whole-text rewriting leaves 6% of validation and 12% of test stories flagged), fakespot 8 of 12. **0 of 12 stories ended under 30% on ours and desklib**
+(95% interval 0-24%). Half the runs ended "exhausted": every sentence had been rewritten once and desklib's score had not moved.
 Its signal is spread across the whole text, not carried by a few sentences, and editing sentences one at a time does not remove it.
 
 How far the existing humanizers are from the 30% bar (validation split, kept rewrites, `below_target`):
@@ -202,7 +202,7 @@ How far the existing humanizers are from the 30% bar (validation split, kept rew
 | desklib steering (21) | 5 (24%) | 1 |
 | strong mode (24) | 1 (4%) | 0 |
 
-Only 1 in 4 attempts reaches a desklib score under 0.30 at all (22 of 61 for v1), and most of those fail the guardrails (8 of 35 passed).
+Across all attempts, desklib scored under 0.30 on 22 of 61 for v1 (8 of the 35 that passed the guardrails) and on 9 of 61 for v2 (3 of 39 that passed).
 So under the meaning-preserving guardrails nothing built here gets close to "consistently under 30%"; the fidelity/evasion limit of section 2 binds
 harder at this bar than at the frozen cutoffs.
 
