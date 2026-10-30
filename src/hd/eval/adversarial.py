@@ -109,3 +109,63 @@ def run_adversarial(cfg: dict[str, Any], processed: Path | None = None) -> pd.Da
     results = resolve_path(cfg, "results")
     table.round(4).to_csv(results / "adversarial_round1.csv", index=False)
     return table
+
+
+# ---- the one-time look at the test split ---------------------------------------------------------------------------------
+
+TEST_MARK = "adversarial-test"
+
+
+def run_adversarial_test(cfg: dict[str, Any], loop_logs: list[Path], *, again: bool = False) -> pd.DataFrame:
+    """Score the retrained detector (and the original, for comparison) on the TEST split, once.
+
+    Everything was fixed before this ran: the model is the one `run_adversarial` saved (trained on train data only) and each
+    model's cutoff is the 5%-false-positive point on VALIDATION human stories. Refuses a second run unless `again`; the log
+    records every unlock. This is the second time the test split is read (the first was the main final evaluation), and
+    FINDINGS.md says so.
+    """
+    from hd.data.splits import load_split
+    from hd.eval.final import access_log_path, log_test_access
+    from hd.features.perplexity import GPT2Scorer
+
+    log = access_log_path(cfg)
+    runs = sum(TEST_MARK in line for line in log.read_text().splitlines()) if log.exists() else 0
+    if runs and not again:
+        raise RuntimeError(f"the retrained detector was already scored on the test split ({runs} time(s), see {log.name}); pass --again only to repeat on purpose")
+    processed, models_dir = resolve_path(cfg, "processed"), Path(resolve_path(cfg, "results")).parent / "models"
+    old = joblib.load(models_dir / f"{VARIANT}.joblib")["model"]
+    new = joblib.load(models_dir / f"{VARIANT}_adv.joblib")["model"]
+    val = load_split_features(cfg, "val")
+    human_val = val[(val["genre"] == "story") & (val["label"] == 0)]
+    cutoffs = {n: threshold_at_fpr(predict_proba(m, human_val), 0.05) for n, m in (("original", old), ("retrained", new))}
+
+    corpus = pd.read_parquet(processed / "corpus.parquet")
+    log_test_access(cfg, f"{TEST_MARK}{' (repeat, --again)' if runs else ''}")
+    test = load_split(corpus[corpus["has_pair"]], "test", unlock_test=True).merge(pd.read_parquet(processed / "features.parquet"), on="id", how="inner")
+    story = test[test["genre"] == "story"]
+    human, raw = story[story["label"] == 0], story[story["label"] == 1]
+    rewrites = with_features(collect_rewrites(loop_logs, corpus), processed / "features_rewrites_test.parquet", GPT2Scorer())
+    print(f"test: {len(human)} human / {len(raw)} raw AI stories, {len(rewrites)} rewrites of {rewrites['source_id'].nunique()} stories; cutoffs {cutoffs}")
+
+    rows = []
+    for name, model in (("original", old), ("retrained", new)):
+        cut = cutoffs[name]
+        for gname, df in {"raw AI stories": raw, "all rewrites": rewrites, "kept rewrites (passed guardrails)": rewrites[rewrites["kept"]],
+                          "human stories (false positives)": human}.items():  # fmt: skip
+            rows.append({"detector": name, "cutoff": cut, "texts": gname, **_flag_stats(predict_proba(model, df), cut)})
+        # what the user actually receives per story: the kept rewrite, or the original if no rewrite passed the guardrails
+        recs = [json.loads(line) for p in loop_logs for line in open(p)]
+        kept = rewrites[rewrites["kept"]].drop_duplicates("source_id").set_index("source_id")
+        delivered = pd.concat([kept.loc[[r["id"]]] if r["id"] in kept.index else raw[raw["id"] == r["id"]].set_index("id") for r in recs])
+        rows.append({"detector": name, "cutoff": cut, "texts": "delivered text per story (kept rewrite, else original)", **_flag_stats(predict_proba(model, delivered), cut)})
+    for det, score, cutcol in (("desklib", "external", "ext_cutoff"), ("fakespot", "judge", "judge_cutoff")):
+        have = rewrites.dropna(subset=[score, cutcol])
+        for gname, df in {"all rewrites": have, "kept rewrites (passed guardrails)": have[have["kept"]]}.items():
+            k = int((df[score] > df[cutcol]).sum())
+            lo, hi = wilson_ci(k, len(df))
+            rows.append({"detector": det, "cutoff": float("nan"), "texts": gname, "n": len(df), "flagged": k, "rate": k / len(df) if len(df) else float("nan"), "lo": lo, "hi": hi})
+    table = pd.DataFrame(rows)
+    out = resolve_path(cfg, "results") / "final"
+    out.mkdir(parents=True, exist_ok=True)
+    table.round(4).to_csv(out / "adversarial_test.csv", index=False)
+    return table

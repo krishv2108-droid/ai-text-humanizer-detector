@@ -4,3 +4,4 @@
 2026-10-30T03:47:53.338616+00:00 test split unlocked | loop run genre=story n=26 strategy=full model=qwen/qwen3.8-27b
 2026-10-30T03:50:35.440359+00:00 test split unlocked | loop run genre=story n=26 strategy=full model=qwen/qwen3.8-27b
 2026-10-30T03:57:09.847961+00:00 test split unlocked | final-eval
+2026-10-30T04:56:23.668784+00:00 test split unlocked | adversarial-test

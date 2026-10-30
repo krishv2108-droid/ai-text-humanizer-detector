@@ -99,7 +99,11 @@ def build_parser() -> argparse.ArgumentParser:
     ctl.add_argument("--genre", choices=["story", "essay", "casual"], default="story")
     ctl.add_argument("--n", type=int, default=40)
     ctl.add_argument("--max-words", type=int, default=400)
-    ev_sub.add_parser("adversarial", help="retrain our detector on humanizer rewrites from TRAIN logs; evaluate on validation (original model is kept)")
+    adv = ev_sub.add_parser("adversarial", help="retrain our detector on humanizer rewrites from TRAIN logs; evaluate on validation (original model is kept)")
+    adv.add_argument("--test", action="store_true", help="instead: score the already-retrained detector on the TEST split, once (logged; needs --unlock-test and --loop-log)")
+    adv.add_argument("--unlock-test", action="store_true", help="confirm that this run reads the held-out test split")
+    adv.add_argument("--loop-log", action="append", default=[], help="test-split loop logs whose rewrites to score (repeatable)")
+    adv.add_argument("--again", action="store_true", help="repeat the one-time test scoring on purpose (recorded in the log)")
     mk = ev_sub.add_parser("manual-kit", help="blind sample files + log template for testing commercial AI detectors by hand")
     mk.add_argument("--log", required=True, help="a loop log (use a validation log; the kit exports AI text and rewrites only)")
     mk.add_argument("--n", type=int, default=5, help="how many raw/rewrite pairs")
@@ -464,8 +468,14 @@ def _run_eval(args: argparse.Namespace, cfg: dict) -> int:
         for name, path in written.items():
             print(f"  {name}: {path}")
     elif cmd == "adversarial":
-        from hd.eval.adversarial import run_adversarial
+        from hd.eval.adversarial import run_adversarial, run_adversarial_test
 
+        if args.test:
+            if not args.unlock_test or not args.loop_log:
+                raise RuntimeError("--test needs --unlock-test and at least one --loop-log (the test run is logged and happens once)")
+            table = run_adversarial_test(cfg, [Path(p) for p in args.loop_log], again=args.again)
+            print(table.round(3).to_string(index=False))
+            return 0
         table = run_adversarial(cfg)
         print(table.round(3).to_string(index=False))
         print(f"-> {results / 'adversarial_round1.csv'}  (retrained model: models/gbm_full_adv.joblib; the original model is untouched)")

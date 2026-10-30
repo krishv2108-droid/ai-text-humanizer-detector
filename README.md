@@ -51,8 +51,8 @@ What we learned (details and limitations in `reports/FINDINGS.md`):
   significant, paired p = 0.34), at 2.2 times the cost. Evasion of a detector you steer on does not transfer.
 
 - **Training on rewrites closes our detector's gap (development result).** Our detector caught only 17% of validation rewrites; retrained on 162 rewrites from train stories it
-  catches 96% (93-98%) at the same 6% false-positive rate, ahead of desklib (63%) and fakespot (61%) on those same rewrites. Caveat: one humanizer, not yet tested against a rewriter
-  that adapts to the new detector or on the test split (`reports/FINDINGS.md` section 2f).
+  catches 96% (93-98%) at the same 6% false-positive rate, ahead of desklib (63%) and fakespot (61%) on those same rewrites. On the held-out test split it flags **25 of the 26** texts the humanizer delivered (96%; 81-99%), against 3 for the original detector, at a 5% false-positive rate
+  (`reports/FINDINGS.md` sections 2f and 4f). Caveat: one humanizer; not yet tested against a rewriter that adapts to the new detector.
 - **Surgery and a flat "under 30%" bar did not work** (`reports/FINDINGS.md` section 2e): editing only the most machine-looking sentences kept meaning (0.95) but moved no detector.
 
 First-pass comparison of prompt strategies (10 validation stories, `qwen3.8-27b`, prompt v1, before guardrails; still a pilot):

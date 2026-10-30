@@ -350,6 +350,25 @@ not the tool's own verdict; the controls are essays, not stories. **GPTZero was 
 during the session and its scores (30%, then 100% on every later text) could not be trusted, so no GPTZero number is used anywhere.
 The raw GPTZero rows stay in the log, marked set aside.
 
+### 4f. The retrained detector on the test split (second, disclosed use of the test set)
+
+After section 2f, the retrained detector was scored once on the test split (`hd eval adversarial --test --unlock-test`, logged in
+`results/test_access_log.txt` as "adversarial-test"). This is the **second** time the test split has been read (the first was 4a-4b). Nothing was
+changed in between: the model was trained on train data only, and each model's cutoff is the 5%-false-positive point on VALIDATION human stories (0.185 original, 0.440
+retrained). It was run once, and the result is reported as it came (`results/final/adversarial_test.csv`).
+
+| Test stories | Original detector | Retrained detector | desklib | fakespot |
+|---|---|---|---|---|
+| Raw AI stories flagged (39) | 97% (38) | 97% (38) | | |
+| **Text the user receives, flagged (26 stories)** | 12% (3; 4-29%) | **96% (25; 81-99%)** | 88% (23) | 65% (17) |
+| All rewrites flagged (39) | 18% (7) | 92% (36; 80-97%) | 77% (30) | 56% (22) |
+| Human stories flagged (39) | 2.6% (1) | 5.1% (2; 1-17%) | | |
+
+The validation result held: the retrained detector flags 25 of the 26 texts the humanizer delivered, where the original flagged 3, and it did so ahead of both independent detectors on the same
+texts. Its false-positive rate is 5.1% (2 of 39), consistent with the 5% target but with a wide interval (1-17%) at this size. **Limits as before**: one humanizer
+(`qwen3.8-27b`) and one prompt family produced all the training and test rewrites, so this shows the detector learned that humanizer's output, not that it would catch a
+different rewriter; the rewrites were produced against the old detector; and 26 stories keep every interval wide.
+
 ## Reproduce
 
 ```bash

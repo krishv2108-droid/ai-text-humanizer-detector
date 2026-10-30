@@ -1,0 +1,15 @@
+detector,cutoff,texts,n,flagged,rate,lo,hi
+original,0.1851,raw AI stories,39,38,0.9744,0.8682,0.9955
+original,0.1851,all rewrites,39,7,0.1795,0.0898,0.3267
+original,0.1851,kept rewrites (passed guardrails),26,3,0.1154,0.04,0.2898
+original,0.1851,human stories (false positives),39,1,0.0256,0.0045,0.1318
+original,0.1851,"delivered text per story (kept rewrite, else original)",26,3,0.1154,0.04,0.2898
+retrained,0.4397,raw AI stories,39,38,0.9744,0.8682,0.9955
+retrained,0.4397,all rewrites,39,36,0.9231,0.7968,0.9735
+retrained,0.4397,kept rewrites (passed guardrails),26,25,0.9615,0.8111,0.9932
+retrained,0.4397,human stories (false positives),39,2,0.0513,0.0142,0.1689
+retrained,0.4397,"delivered text per story (kept rewrite, else original)",26,25,0.9615,0.8111,0.9932
+desklib,,all rewrites,39,30,0.7692,0.6166,0.8735
+desklib,,kept rewrites (passed guardrails),26,23,0.8846,0.7102,0.96
+fakespot,,all rewrites,39,22,0.5641,0.4098,0.707
+fakespot,,kept rewrites (passed guardrails),26,17,0.6538,0.4622,0.8059
