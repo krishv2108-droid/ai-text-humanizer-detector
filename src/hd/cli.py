@@ -99,6 +99,7 @@ def build_parser() -> argparse.ArgumentParser:
     ctl.add_argument("--genre", choices=["story", "essay", "casual"], default="story")
     ctl.add_argument("--n", type=int, default=40)
     ctl.add_argument("--max-words", type=int, default=400)
+    ev_sub.add_parser("adversarial", help="retrain our detector on humanizer rewrites from TRAIN logs; evaluate on validation (original model is kept)")
     mk = ev_sub.add_parser("manual-kit", help="blind sample files + log template for testing commercial AI detectors by hand")
     mk.add_argument("--log", required=True, help="a loop log (use a validation log; the kit exports AI text and rewrites only)")
     mk.add_argument("--n", type=int, default=5, help="how many raw/rewrite pairs")
@@ -462,6 +463,12 @@ def _run_eval(args: argparse.Namespace, cfg: dict) -> int:
         print(pd.read_csv(written["detectors"]).round(3).to_string(index=False))
         for name, path in written.items():
             print(f"  {name}: {path}")
+    elif cmd == "adversarial":
+        from hd.eval.adversarial import run_adversarial
+
+        table = run_adversarial(cfg)
+        print(table.round(3).to_string(index=False))
+        print(f"-> {results / 'adversarial_round1.csv'}  (retrained model: models/gbm_full_adv.joblib; the original model is untouched)")
     elif cmd == "control":
         import pandas as pd
 

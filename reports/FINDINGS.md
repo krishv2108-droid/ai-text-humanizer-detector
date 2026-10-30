@@ -206,6 +206,31 @@ Across all attempts, desklib scored under 0.30 on 22 of 61 for v1 (8 of the 35 t
 So under the meaning-preserving guardrails nothing built here gets close to "consistently under 30%"; the fidelity/evasion limit of section 2 binds
 harder at this bar than at the frozen cutoffs.
 
+### 2f. Closing the detector's gap: adversarial retraining, round 1 (validation, development)
+
+On the 13 hand-checked texts our detector caught 5 of 5 raw AI stories but only 1 of 5 rewrites, while desklib caught 5, fakespot 4 and ZeroGPT 4.
+The classic defense is to add the attacker's output to the training data. `hd eval adversarial` retrains the same model (gradient-boosted trees on
+stylometric and GPT-2 features) on the train split plus all 162 distinct humanizer rewrites found in TRAIN-split loop logs (labelled AI; they come from
+12 train stories and share those stories' prompt ids, so cross-validation keeps each story and its rewrites together). It is evaluated on the validation split only. The cutoff is the
+5%-false-positive point on validation human stories, set once per model. The original model stays as it was (the retrained one is `models/gbm_full_adv.joblib`,
+which is git-ignored; rerun the command to rebuild it). The test split was not used.
+
+| Texts (validation stories) | Original detector | Retrained detector | desklib | fakespot |
+|---|---|---|---|---|
+| Raw AI stories, flagged | 98% (49 of 50) | 98% (49 of 50) | | |
+| All humanizer rewrites, flagged | 17% (44 of 257; 13-22%) | **96% (247 of 257; 93-98%)** | 63% (163) | 61% (86 of 140) |
+| Rewrites that passed the guardrails, flagged | 16% (20 of 124) | **95% (118 of 124; 90-98%)** | 76% (94 of 124) | 62% (43 of 69) |
+| Human stories flagged (false positives) | 6% (3 of 50) | 6% (3 of 50) | | |
+
+Robustness checks the retrained model never saw (validation stories, rule-based edits, no LLM): punctuation-split raw AI text, which fools the original detector
+down to 12% flagged, is flagged 98% by the retrained one; the same split applied to HUMAN stories is flagged 8% (original 2%) and pair-merged human text 2%, so it does not
+simply flag anything fragmentary. The author's three own essays (a different genre) score P(AI) 0.00 on the retrained model.
+
+**Limits, stated plainly.** The training and validation rewrites all come from one humanizer (`qwen3.8-27b`) and one prompt family, so the model may be learning that
+humanizer's fingerprint rather than "human-like writing"; a different rewriter has not been tried. The validation rewrites were produced while the ORIGINAL detector steered, so
+this is a defense against past attacks; whether a humanizer that adapts to the retrained detector gets past it (round 2) has not been run. Validation has only 50 human stories,
+and the cutoff and the false-positive figure come from the same 50. Treat 96% as an upper bound for unseen rewriters until it is checked on the test split or on another humanizer.
+
 ## 3. Limitations
 
 - **One generator per genre, one human source per genre.** HC3's AI side is ChatGPT from December 2022; the story AI side is
