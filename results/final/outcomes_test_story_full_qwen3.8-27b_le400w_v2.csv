@@ -1,0 +1,7 @@
+genre,strategy,model,prompt,steer,strength,policy,detector,steers,n,flagged_before,before_lo,before_hi,flagged_after,after_lo,after_hi,n_detected_before,evaded_of_detected,rewrite_accepted,mean_similarity_kept
+story,full,qwen/qwen3.8-27b,v2,ours,faithful,kept,ours,True,26,1.0,0.8713,1.0,0.1154,0.04,0.2898,26,0.8846,1.0,0.9012
+story,full,qwen/qwen3.8-27b,v2,ours,faithful,kept,desklib,False,26,1.0,0.8713,1.0,0.8846,0.7102,0.96,26,0.1154,1.0,0.9012
+story,full,qwen/qwen3.8-27b,v2,ours,faithful,kept,fakespot,False,26,0.8846,0.7102,0.96,0.6538,0.4622,0.8059,23,0.3043,1.0,0.9012
+story,full,qwen/qwen3.8-27b,v2,ours,faithful,unguarded,ours,True,26,1.0,0.8713,1.0,0.0,0.0,0.1287,26,1.0,1.0,0.9012
+story,full,qwen/qwen3.8-27b,v2,ours,faithful,unguarded,desklib,False,26,1.0,0.8713,1.0,0.7692,0.5795,0.8897,26,0.2308,1.0,0.9012
+story,full,qwen/qwen3.8-27b,v2,ours,faithful,unguarded,fakespot,False,26,0.8846,0.7102,0.96,0.5385,0.3546,0.7124,23,0.4348,1.0,0.9012

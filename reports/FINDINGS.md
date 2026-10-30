@@ -212,21 +212,71 @@ motivated by this pilot, the final evaluation must report both rules.
   note also that even a good detector flags some human writing (5% here by construction), which matters when detectors are used
   to accuse people.
 
-## 4. Final held-out evaluation (not yet run)
+## 4. Final held-out evaluation
 
-The test split (15% of prompts, never used for training, tuning or threshold selection) is unlocked only by
-`uv run hd eval final --unlock-test`, which:
+Run once on 2026-10-30 (`hd loop run --split test --unlock-test ...`, then `hd eval final --unlock-test`; every unlock is in
+`results/test_access_log.txt`). Settings were fixed on the validation split first: cutoffs frozen in
+`results/detector_thresholds.json`, humanizer `qwen3.8-27b`, `full` strategy, prompt v2, repair on, faithful strength, our detector
+steering and fakespot judging. Nothing was retuned after seeing test data. Tables: `results/final/`.
 
-- logs every unlock in `results/test_access_log.txt` and refuses to run a second time without `--again`;
-- uses the cutoffs frozen on validation (`results/detector_thresholds.json`), retuning nothing;
-- reports per genre, per detector: AUC, AI caught, human flagged (each with intervals), plus the loop outcome tables for any
-  test-split loop logs (`hd loop run --split test --unlock-test`, also logged).
+**4a. The detectors on unseen prompts** (`results/final/detector_test_metrics.csv`; cutoff = the frozen 5%-false-positive point):
 
-Decisions already fixed before looking at test data: both steering modes are reported (ours only; ours + desklib) with fakespot as the
-judge in both; the humanizer model (`qwen3.8-27b`, the only one that rewrites enough), the
-`full` strategy with prompt v2 and repair on (prompt v1 is reported as the baseline), the guardrail rule (reported under both
-reading-level rules), and that results from different humanizer models or prompt versions are reported separately and never pooled. When it runs, this section gets replaced with the actual numbers, including any
-that disappoint.
+| Genre | Detector | AUC | AI caught | Human flagged |
+|---|---|---|---|---|
+| story (39 AI / 39 human) | ours | 0.995 (0.983-1.000) | 97% (87-100%) | 2.6% (0.4-13%) |
+| story | desklib | 1.000 | 100% (91-100%) | 2.6% (0.4-13%) |
+| essay (264 / 264) | ours | 0.998 | 98.5% | 4.2% |
+| essay | desklib | 0.996 | 97.0% | 3.4% |
+| casual (150 / 150) | ours | 0.999 | 99.3% | 3.3% |
+| casual | desklib | 1.000 | 100% | 3.3% |
+
+Both detectors keep their promised false-positive rate on unseen prompts (2.6-4.2% against the 5% target) and catch 97-100% of
+unedited AI text. The story test set is small (39 pairs), so its intervals are wide. The fakespot judge was scored on rewrites only,
+not on this table.
+
+**4b. Does the humanizer work?** 26 test stories of at most 400 words (every test story that short; 39 test stories in all),
+faithful strength, policy "kept" (a rewrite that fails a guardrail means the user keeps the flagged original):
+
+| | Flagged before | Flagged after | Fraction of flagged stories fixed |
+|---|---|---|---|
+| Our detector (steers) | 100% (87-100%) | 12% (4-29%) | 88% |
+| desklib (never steers) | 100% (87-100%) | **88% (71-96%)** | 12% |
+| fakespot (judge, never steers) | 88% (71-96%) | **65% (46-81%)** | 30% |
+
+All 26 rewrites passed the guardrails; mean meaning similarity of the kept rewrite was 0.90.
+
+Headline, the share of stories where the user's final text passes the guardrails AND the detectors do not flag it:
+
+| Must fool | Kept-rewrite policy | Unguarded (ignores guardrails) |
+|---|---|---|
+| ours + desklib | 3 of 26: 12% (4-29%) | 6 of 26: 23% (11-42%) |
+| ours + fakespot | 8 of 26: 31% (17-50%) | 12 of 26: 46% (29-65%) |
+| **all three** | **2 of 26: 8% (2-24%)** | 5 of 26: 19% (9-38%) |
+
+**What this says, plainly.** The humanizer reliably beats the detector that steers it (88% of its flags removed) and mostly fails
+against independent detectors: desklib still flags 88% of the rewrites. Only 2 of 26 stories (8%) end up fooling all three
+detectors with the meaning intact. That is lower than the 15% found on validation (5 of 34), but the intervals overlap heavily
+(2-24% against 6-30%), so the two runs agree to within noise. The test result also confirms the fidelity/evasion limit from section 2:
+dropping the guardrails (the "unguarded" column) raises the all-three rate from 8% to 19%, which is consistent with
+the limit: some of the rewrites that evade the detectors are ones the guardrails reject for changing the story too much.
+
+**4c. What was NOT run on the test split.** The plan fixed more comparisons than the test set got, so none of the following has a
+test-split number:
+
+- **Strong mode** (pre-registered). Dropped on the test split for lack of time and quota; on validation it showed no gain
+  (4 of 24 against 4 of 24 for faithful on the same stories), so it is reported from validation only (section 2).
+- **Desklib steering** and the **prompt-v1 baseline**: validation only (section 2).
+- The **old reading-level delta rule**: the human-range rule is the only one applied to the test run.
+- **Essay and casual humanizing**: not run at any split.
+- **The manual commercial-detector check** (`reports/manual_detector_log.md`) is a separate small hand test; its results are
+  filled in below once done.
+
+**4d. Caveats specific to this run.** One humanizer model, one prompt, short stories (at most 400 words; the longer test stories were
+excluded because the humanizer model's output cap makes them infeasible), n = 26 so each story moves a rate by about 4 points. The
+run was resumed several times across rate limits, which is why `results/test_access_log.txt` has several loop entries; the items and
+settings were identical each time (a larger run extends the same deterministic sample). Fakespot was used as a judge on both
+validation and test, but its cutoff was set on validation only.
+
 
 ## Reproduce
 

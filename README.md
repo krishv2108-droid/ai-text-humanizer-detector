@@ -5,9 +5,14 @@ human, and which linguistic features give AI text away?
 
 ## Results summary
 
-**Development results, not the final result.** Everything here comes from the training or *validation* split. The
-held-out test evaluation has not been run, and the humanizer experiments are small (one humanizer model, short stories),
-so every rate carries a 95% interval.
+**Final held-out result (test split, run once):** on 26 unseen AI stories of at most 400 words, the faithful humanizer removed our own
+detector's flag on 88% of them, but desklib (never used to steer) still flags **88% (71-96%)** of the rewrites and fakespot 65% (46-81%).
+Only **2 of 26 stories (8%; 95% interval 2-24%)** end with a rewrite that keeps the meaning and fools all three detectors.
+Without the meaning guardrails it would be 5 of 26 (19%). The detectors themselves hold up on unseen prompts (AUC 0.995-1.000 on
+stories; 2.6-4.2% of human text flagged, against the 5% design target). Full tables and what was not tested: `reports/FINDINGS.md` section 4.
+
+The tables below are the validation-split development results the settings were chosen from. The experiments are small (one humanizer
+model, short stories), so every rate carries a 95% interval.
 
 "Flagged" means above the cutoff that flags 5% of real human text, fixed in advance for each detector. The headline
 question is: **for what share of AI stories does the user end up with a rewrite that keeps the meaning (passes every
@@ -97,7 +102,7 @@ provider's rate-limit headers, and batch jobs stop cleanly at a daily limit and 
 ## Project status
 
 Built in small milestones, one commit each (see `git log`); per-milestone notes are in
-`LEARNING.md`. Current: **M7 - evaluation tooling** (built and tested; the held-out test evaluation has not been run; the full write-up is in `reports/FINDINGS.md`). The 293 AI stories are generated and a 10-story pilot of the loop has run. Next: grow the samples within the daily quota, run the final evaluation once, and M8 (app). The free Groq tier allows only about 65 rewrites per model per day, which sets the size of the experiments.
+`LEARNING.md`. Current: **M0-M8 done** (data, features, detector, humanizer, loop, evaluation, Streamlit app). The held-out test evaluation has run once (faithful mode, 26 stories); the write-up is in `reports/FINDINGS.md`. Still to do by hand: the commercial-detector check (`reports/manual_detector_log.md`). The free Groq tier allows only about 65 rewrites per model per day, which sets the size of the experiments.
 
 ## What gives AI text away? (preliminary, M2)
 
