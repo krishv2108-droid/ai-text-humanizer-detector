@@ -73,6 +73,12 @@ uv run hd --version
 of the extras you left out, which breaks the pipeline until you sync again (the wheels stay in uv's cache, so
 restoring is quick and needs no download).
 
+**More than one key (optional).** Groq's limits are per account (organization), so a second *key in the same account* adds nothing; a key
+from a second account has its own pool (check the provider's terms before doing that). Put extra keys in `.env` as `GROQ_API_KEY_2`,
+`GROQ_API_KEY_3`, ... (append with `>>`; `>` overwrites the file). When one key hits its rate or daily limit the call is retried on the next
+one and the exhausted key is skipped until its retry time; an invalid key is reported by position, never silently skipped. Both keys serve the
+same model, so results from all keys can be pooled. `uv run hd llm check` reports each key.
+
 **LLM provider (free tier).** Story generation and the humanizer use a free [Groq](https://console.groq.com)
 key (`llm.provider: groq` in `configs/default.yaml`; `anthropic` is also supported). Put it in a git-ignored
 `.env` file in the project root containing the single line `GROQ_API_KEY=your-key` (never committed), or

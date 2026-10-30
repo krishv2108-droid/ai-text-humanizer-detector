@@ -304,6 +304,61 @@ class MockClient:
         return LLMResponse(text=text, input_tokens=len(prompt.split()), output_tokens=len(text.split()))
 
 
+class RotatingClient:
+    """Several accounts' keys for the SAME provider and model: a call that hits one key's limit is retried on the next.
+
+    Which key served a request cannot change what the model writes, so results from all keys can be pooled (unlike results from
+    different models or providers). A key that ran out is skipped until its retry time; an invalid key is NOT skipped silently
+    (the error names which key). When every key is limited, the error carries the soonest retry time so a batch can stop cleanly.
+    """
+
+    def __init__(self, clients: list[LLMClient], clock: Callable[[], float] = time.monotonic):
+        if not clients:
+            raise ValueError("RotatingClient needs at least one client")
+        self.clients, self._clock = clients, clock
+        self._blocked_until = [0.0] * len(clients)
+        self._daily = [False] * len(clients)
+        self._current = 0
+
+    def complete(self, **kwargs) -> LLMResponse:
+        n, last_daily = len(self.clients), True
+        for step in range(n):
+            i = (self._current + step) % n
+            if self._blocked_until[i] > self._clock():
+                last_daily = last_daily and self._daily[i]
+                continue
+            try:
+                resp = self.clients[i].complete(**kwargs)
+            except RateLimited as err:
+                daily = isinstance(err, DailyLimitReached)
+                self._blocked_until[i], self._daily[i] = self._clock() + (err.retry_in_s or (3600 if daily else 60)), daily
+                last_daily = last_daily and daily
+                continue
+            except RefusalError:
+                raise
+            except RuntimeError as err:  # e.g. an invalid key: say which one instead of quietly using the others
+                raise RuntimeError(f"key {i + 1} of {n}: {err}") from err
+            self._current = i
+            return resp
+        soonest = max(0.0, min(self._blocked_until) - self._clock())
+        kind = DailyLimitReached if last_daily else RateLimited
+        raise kind(f"all {n} API key(s) are rate limited (the soonest one frees up in about {soonest / 60:.0f} min)", soonest)
+
+
+def api_keys(provider: str) -> list[str]:
+    """Every key set for the provider: `<ENV>`, then `<ENV>_2`, `<ENV>_3`, ... (blank and duplicate values are ignored)."""
+    import os
+
+    first = api_key(provider)  # validates the provider and requires the primary key, with the clear error message
+    env = PROVIDERS[provider]["key_env"]
+    keys = [first]
+    for n in range(2, 10):
+        extra = os.environ.get(f"{env}_{n}", "").strip()
+        if extra and extra not in keys:
+            keys.append(extra)
+    return keys
+
+
 def api_key(provider: str) -> str:
     """The provider's key from the environment or the git-ignored `.env` file; clear error if missing."""
     import os
@@ -327,14 +382,18 @@ def make_client(cfg: dict, cache_dir: Path) -> LLMClient:
     """The configured provider's client, wrapped in the disk cache. Fails early if no key is set."""
     llm = cfg["llm"]
     provider = llm.get("provider", "anthropic")
-    key = api_key(provider)  # validates provider + key before anything is built
+    keys = api_keys(provider)  # validates provider + the primary key before anything is built
     if provider == "anthropic":
         inner: LLMClient = AnthropicClient(max_retries=llm["max_retries"])
     else:
-        inner = OpenAICompatClient(
-            PROVIDERS[provider]["base_url"], key,
-            max_retries=llm["max_retries"], seed=cfg.get("seed"),
-            pacer=HeaderPacer(llm.get("min_interval_s", 2.0)),
-            reasoning_headroom=llm.get("reasoning_headroom", 1500),
-        )  # fmt: skip
+        clients: list[LLMClient] = [
+            OpenAICompatClient(
+                PROVIDERS[provider]["base_url"], key,
+                max_retries=llm["max_retries"], seed=cfg.get("seed"),
+                pacer=HeaderPacer(llm.get("min_interval_s", 2.0)),  # one pacer per key: each account has its own limits
+                reasoning_headroom=llm.get("reasoning_headroom", 1500),
+            )
+            for key in keys
+        ]  # fmt: skip
+        inner = clients[0] if len(clients) == 1 else RotatingClient(clients)
     return CachedClient(inner, cache_dir) if llm["cache"] else inner

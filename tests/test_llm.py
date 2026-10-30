@@ -253,3 +253,121 @@ def test_generator_stops_at_the_daily_limit_and_resumes(tmp_path):
     later = generate_stories(MockClient(lambda p: "She walked home slowly in the rain. " * 12), prompts, out, **kw)
     assert later["skipped_done"] == 2 and later["written"] == 3 and not later["stopped_by_limit"]
     assert len({json.loads(line)["prompt_id"] for line in open(out)}) == 5
+
+
+# ---- several keys for the same provider and model --------------------------------------------------------------------
+
+
+class Scripted:
+    """A fake per-key client: replays a script of responses/exceptions (the last item repeats) and counts its calls."""
+
+    def __init__(self, *script):
+        self.script, self.calls = list(script), 0
+
+    def complete(self, **kwargs):
+        self.calls += 1
+        item = self.script.pop(0) if len(self.script) > 1 else self.script[0]
+        if isinstance(item, Exception):
+            raise item
+        return LLMResponse(text=item)
+
+
+class TickClock:
+    now = 1000.0
+
+    def __call__(self):
+        return self.now
+
+
+CALL = dict(system="s", prompt="p", model="m", max_tokens=10)
+
+
+def test_rotation_moves_to_the_next_key_when_one_runs_out_and_returns_after_the_retry_time():
+    from hd.llm import DailyLimitReached, RotatingClient
+
+    clock = TickClock()
+    a = Scripted(DailyLimitReached("tokens per day", 600.0), "from-a")  # runs out once, then works again
+    b = Scripted("from-b")
+    client = RotatingClient([a, b], clock=clock)
+    assert client.complete(**CALL).text == "from-b" and (a.calls, b.calls) == (1, 1)  # a failed, b answered
+    assert client.complete(**CALL).text == "from-b" and (a.calls, b.calls) == (1, 2)  # a is skipped, not hammered
+    clock.now += 601  # a's retry time has passed
+    assert client.complete(**CALL).text == "from-b" and a.calls == 1  # b stays current until it fails
+    b.script = [DailyLimitReached("tokens per day", 600.0)]
+    assert client.complete(**CALL).text == "from-a" and a.calls == 2  # a is usable again
+
+
+def test_when_every_key_is_limited_the_error_carries_the_soonest_retry_time():
+    from hd.llm import DailyLimitReached, RateLimited, RotatingClient
+
+    clock = TickClock()
+    client = RotatingClient([Scripted(DailyLimitReached("tokens per day", 900.0)), Scripted(DailyLimitReached("tokens per day", 300.0))], clock=clock)
+    with pytest.raises(DailyLimitReached) as err:
+        client.complete(**CALL)
+    assert err.value.retry_in_s == 300.0 and "2 API key" in str(err.value)
+    mixed = RotatingClient([Scripted(DailyLimitReached("per day", 900.0)), Scripted(RateLimited("per minute", 20.0))], clock=clock)
+    with pytest.raises(RateLimited) as err2:
+        mixed.complete(**CALL)
+    assert not isinstance(err2.value, DailyLimitReached) and err2.value.retry_in_s == 20.0  # a per-minute limit is not reported as a daily one
+
+
+def test_a_per_minute_limit_also_rotates():
+    from hd.llm import RateLimited, RotatingClient
+
+    a, b = Scripted(RateLimited("per minute", 20.0)), Scripted("from-b")
+    assert RotatingClient([a, b], clock=TickClock()).complete(**CALL).text == "from-b"
+
+
+def test_an_invalid_key_is_reported_by_position_not_skipped_and_refusals_are_not_retried():
+    from hd.llm import RefusalError, RotatingClient
+
+    bad, good = Scripted(RuntimeError("the provider rejected the API key")), Scripted("ok")
+    with pytest.raises(RuntimeError, match="key 1 of 2: the provider rejected"):
+        RotatingClient([bad, good], clock=TickClock()).complete(**CALL)
+    assert good.calls == 0  # silently using the other key would hide a broken one
+    refuser, other = Scripted(RefusalError("declined")), Scripted("ok")
+    with pytest.raises(RefusalError):
+        RotatingClient([refuser, other], clock=TickClock()).complete(**CALL)
+    assert other.calls == 0  # a refusal is about the request, not the key
+
+
+def test_api_keys_are_collected_in_order_without_blanks_or_duplicates(monkeypatch):
+    from hd.llm import api_keys
+
+    monkeypatch.setattr("hd.config.load_env", lambda *a, **k: False)  # never read the real .env in tests
+    for name in ("GROQ_API_KEY",) + tuple(f"GROQ_API_KEY_{n}" for n in range(2, 10)):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("GROQ_API_KEY", "aaa")
+    monkeypatch.setenv("GROQ_API_KEY_2", "bbb")
+    monkeypatch.setenv("GROQ_API_KEY_3", "   ")
+    monkeypatch.setenv("GROQ_API_KEY_4", "aaa")
+    monkeypatch.setenv("GROQ_API_KEY_5", " ccc ")
+    assert api_keys("groq") == ["aaa", "bbb", "ccc"]
+    monkeypatch.delenv("GROQ_API_KEY")
+    with pytest.raises(RuntimeError, match="GROQ_API_KEY is not set"):
+        api_keys("groq")  # a second key alone is not enough: the primary one is required
+
+
+def test_make_client_rotates_only_when_there_is_more_than_one_key_and_caches_independently_of_the_key(monkeypatch, tmp_path):
+    from hd.llm import CachedClient, OpenAICompatClient, RotatingClient, make_client
+
+    monkeypatch.setattr("hd.config.load_env", lambda *a, **k: False)
+    monkeypatch.setenv("GROQ_API_KEY", "key-one")
+    monkeypatch.delenv("GROQ_API_KEY_2", raising=False)
+    cfg = {"seed": 1, "llm": {"provider": "groq", "max_retries": 1, "min_interval_s": 0.0, "reasoning_headroom": 10, "cache": False}}
+    assert isinstance(make_client(cfg, tmp_path), OpenAICompatClient)
+    monkeypatch.setenv("GROQ_API_KEY_2", "key-two")
+    rotating = make_client(cfg, tmp_path)
+    assert isinstance(rotating, RotatingClient) and len(rotating.clients) == 2
+    assert len({id(c.pacer) for c in rotating.clients}) == 2  # each account is paced against its own limits
+    cached = make_client({**cfg, "llm": {**cfg["llm"], "cache": True}}, tmp_path)
+    assert isinstance(cached, CachedClient)
+
+
+def test_a_cached_answer_is_reused_whichever_key_produced_it(tmp_path):
+    from hd.llm import CachedClient, DailyLimitReached, RotatingClient
+
+    a, b = Scripted(DailyLimitReached("tokens per day", 600.0)), Scripted("story")
+    client = CachedClient(RotatingClient([a, b], clock=TickClock()), tmp_path)
+    assert client.complete(**CALL).text == "story" and b.calls == 1
+    assert client.complete(**CALL).text == "story" and (a.calls, b.calls) == (1, 1)  # served from the cache: no key was touched

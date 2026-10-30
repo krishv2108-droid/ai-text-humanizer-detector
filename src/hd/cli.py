@@ -209,28 +209,30 @@ def _run_detector(args: argparse.Namespace, cfg: dict) -> int:
 
 
 def _run_llm(args: argparse.Namespace, cfg: dict) -> int:
-    from hd.llm import PROVIDERS, OpenAICompatClient, api_key
+    from hd.llm import PROVIDERS, OpenAICompatClient, api_keys
 
     llm = cfg["llm"]
     provider = llm["provider"]
-    key = api_key(provider)  # raises a clear error if missing
-    print(f"provider: {provider}  (key found, {len(key)} characters)")
+    keys = api_keys(provider)  # raises a clear error if the primary key is missing
+    print(f"provider: {provider}  ({len(keys)} key{'s' if len(keys) > 1 else ''} found; a key that hits its limit is skipped for the next)")
     if provider == "anthropic":
         print("limits are not probed for Anthropic; make a call to test the key.")
         return 0
-    client = OpenAICompatClient(PROVIDERS[provider]["base_url"], key, max_retries=2, seed=cfg.get("seed"))
-    for role in ("generation_model", "humanizer_model"):
-        model = llm[role]
-        if role == "humanizer_model" and model == llm["generation_model"]:
-            print(f"{role}: same model as generation_model")
-            continue
-        info = client.probe(model)
-        print(f"\n{role}: {model}")
-        for k, v in info.items():
-            print(f"  {k}: {v}")
-        tpm = float(info["limit_tokens_per_minute"] or 0)
-        if tpm:
-            print(f"  -> per minute, roughly {tpm / 1000:.0f}k tokens: about {int(tpm // 900)} stories or {int(tpm // 2800)} humanizer calls")
+    for number, key in enumerate(keys, 1):
+        client = OpenAICompatClient(PROVIDERS[provider]["base_url"], key, max_retries=2, seed=cfg.get("seed"))
+        print(f"\n=== key {number} of {len(keys)} ({len(key)} characters; the key itself is never printed) ===")
+        for role in ("generation_model", "humanizer_model"):
+            model = llm[role]
+            if role == "humanizer_model" and model == llm["generation_model"]:
+                print(f"{role}: same model as generation_model")
+                continue
+            info = client.probe(model)
+            print(f"{role}: {model}")
+            for k, v in info.items():
+                print(f"  {k}: {v}")
+            tpm = float(info["limit_tokens_per_minute"] or 0)
+            if tpm:
+                print(f"  -> per minute, roughly {tpm / 1000:.0f}k tokens: about {int(tpm // 900)} stories or {int(tpm // 2800)} humanizer calls")
     print("\nDaily token limits are not in the response headers; see https://console.groq.com/settings/limits")
     return 0
 
