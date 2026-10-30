@@ -76,6 +76,7 @@ class LoopResult:
     judge_cutoff: float | None = None  # frozen cutoff of the third (judge) detector, if one was scored
     steer: list[str] = field(default_factory=lambda: ["ours"])  # which detectors decided anything: ["ours"] or ["ours", "external"]
     strength: str = "faithful"  # rewrite strength (prompt variant + guardrail limits); logs written before it existed are faithful
+    target: float | None = None  # surgery runs only: stop when every steering detector scores below this P(AI), if lower than its cutoff
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

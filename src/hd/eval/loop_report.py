@@ -110,6 +110,19 @@ def joint_success(records: list[dict[str, Any]], policy: str = "kept", extra_ok:
     return {"n": len(usable), "fooled_both": wins, "rate": wins / len(usable) if usable else math.nan, "lo": lo, "hi": hi}
 
 
+def below_target(records: list[dict[str, Any]], target: float = 0.30, policy: str = "kept",
+                 detectors: tuple[str, ...] = ("ours", "desklib", "fakespot")) -> dict[str, Any]:  # fmt: skip
+    """Share of texts whose delivered text scores strictly under `target` P(AI) on EVERY listed detector (a flat bar, not the frozen cutoffs).
+
+    A text whose rewrite failed the guardrails delivers the original, which scores high, so it does not count. Records without
+    all the listed detectors' scores are skipped.
+    """
+    usable = [r for r in records if all(r["steps"][0].get(DETECTORS[d][0]) is not None for d in detectors)]
+    wins = sum(all(outcome_step(r, policy)[DETECTORS[d][0]] < target for d in detectors) for r in usable)
+    lo, hi = wilson_ci(wins, len(usable))
+    return {"n": len(usable), "under_target": wins, "rate": wins / len(usable) if usable else math.nan, "lo": lo, "hi": hi}
+
+
 def first_pass_table(by_strategy: dict[str, list[dict[str, Any]]]) -> pd.DataFrame:
     """Compare prompt strategies at equal budget: each text's FIRST rewrite, scored before any guardrail decision.
 

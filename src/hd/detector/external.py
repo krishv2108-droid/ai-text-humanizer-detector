@@ -57,7 +57,8 @@ class DesklibDetector:
         self.model = DesklibAIDetectionModel.from_pretrained(model_name).to(self.device).eval()
 
     @torch.no_grad()
-    def predict_proba(self, texts: list[str]) -> np.ndarray:
+    def logits(self, texts: list[str]) -> np.ndarray:
+        """Raw scores before the sigmoid. Probabilities saturate near 1 for obvious AI text, which hides which sentences matter."""
         lengths = [len(t) for t in texts]
         order = np.argsort(lengths)  # similar lengths per batch -> little padding
         out = np.zeros(len(texts))
@@ -65,9 +66,11 @@ class DesklibDetector:
             idx = order[start : start + self.batch_size]
             enc = self.tokenizer([texts[i] for i in idx], padding=True, truncation=True,
                                  max_length=self.max_len, return_tensors="pt").to(self.device)  # fmt: skip
-            logits = self.model(input_ids=enc["input_ids"], attention_mask=enc["attention_mask"])["logits"]
-            out[idx] = torch.sigmoid(logits.float()).squeeze(-1).cpu().numpy()
+            out[idx] = self.model(input_ids=enc["input_ids"], attention_mask=enc["attention_mask"])["logits"].float().squeeze(-1).cpu().numpy()
         return out
+
+    def predict_proba(self, texts: list[str]) -> np.ndarray:
+        return 1.0 / (1.0 + np.exp(-self.logits(texts)))
 
 
 # ---- third detector: a different architecture and training set from both ours and desklib -------------------------

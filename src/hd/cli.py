@@ -58,7 +58,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--split", choices=["train", "val", "test"], default="val", help="'test' is only for the final evaluation and needs --unlock-test")
     run.add_argument("--unlock-test", action="store_true", help="confirm that this run uses the held-out test split (logged in results/test_access_log.txt)")
     run.add_argument("--n", type=int, default=10, help="how many AI texts (a larger n extends the same sample)")
-    run.add_argument("--strategy", choices=["naive", "craft", "feedback", "full"], default="full")
+    run.add_argument("--strategy", choices=["naive", "craft", "feedback", "full", "surgery"], default="full", help="surgery rewrites only the most machine-looking sentences (desklib steers; needs desklib)")
     run.add_argument("--model", help="humanizer model (default: llm.humanizer_model); each Groq model has its own daily token pool")
     run.add_argument("--max-words", type=int, help="only texts up to this many words (needed for models with small output caps)")
     run.add_argument("--max-iterations", type=int, help="default: loop.max_iterations from the config")
@@ -66,6 +66,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--strength", choices=["faithful", "strong"], default="faithful", help="faithful keeps every sentence's content (similarity >= 0.80); strong may compress minor detail (>= 0.72)")
     run.add_argument("--steer-desklib", action="store_true", help="let desklib steer too: stop only when both detectors pass and keep the best worst-case rewrite (fakespot, the judge, never steers)")
     run.add_argument("--no-judge", action="store_true", help="skip the third detector (fakespot), which is only ever a judge")
+    run.add_argument("--target", type=float, default=0.30, help="surgery only: stop when ours and desklib both score below this P(AI) (or below their own frozen cutoff, if lower)")
     run.add_argument("--no-repair", action="store_true", help="v1 behaviour: after a rejected rewrite restart from the last accepted draft with a generic note")
     run.add_argument("--tag", default="", help="suffix for the log file name (e.g. v2), so runs with different settings never share a file")
     run.add_argument("--out", help="JSONL log (default: data/processed/loop_<split>_<genre>_<strategy>_<model>.jsonl)")
@@ -355,8 +356,8 @@ def _run_loop(args: argparse.Namespace, cfg: dict) -> int:
         from hd.detector.external import DesklibDetector
 
         external, ext_cut = DesklibDetector(), cutoff_for(thresholds, "external", args.genre)
-    if args.steer_desklib and external is None:
-        raise RuntimeError("--steer-desklib needs desklib: drop --no-external")
+    if (args.steer_desklib or args.strategy == "surgery") and external is None:
+        raise RuntimeError("--steer-desklib and --strategy surgery need desklib: drop --no-external")
     judge, judge_cut = None, None
     if not args.no_judge and "third" in thresholds:
         from hd.detector.external import FakespotDetector
@@ -378,6 +379,11 @@ def _run_loop(args: argparse.Namespace, cfg: dict) -> int:
 
     def run_one(item: dict):
         print(f"  {item['id']}: {item['n_words']} words ...", flush=True)
+        if args.strategy == "surgery":
+            from hd.humanizer.surgery import run_surgery
+
+            return run_surgery(detector, humanizer, checker, item["text"], args.genre, our_cutoff=our_cut, ext_cutoff=ext_cut, external=external,
+                               target=args.target, judge=judge, judge_cutoff=judge_cut, max_iterations=max_iter, item_id=item["id"])  # fmt: skip
         return run_loop(detector, humanizer, checker, item["text"], args.genre, strategy=args.strategy, our_cutoff=our_cut,
                         ext_cutoff=ext_cut, external=external, max_iterations=max_iter, item_id=item["id"],
                         repair=not args.no_repair, judge=judge, judge_cutoff=judge_cut, steer_external=args.steer_desklib)  # fmt: skip

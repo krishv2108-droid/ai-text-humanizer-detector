@@ -180,6 +180,32 @@ texts). With the old rule the same 10-story loop ended with ours 80% and desklib
 (`data/processed/..._fkdelta-rule.jsonl`, `results/loop_pilot_story_val_qwen.csv`). Because the change was
 motivated by this pilot, the final evaluation must report both rules.
 
+### 2e. Sentence-level surgery and the "under 30%" bar (development, negative result)
+
+After the held-out test, a stricter goal was set: both steering detectors AND the judge should score under 30% P(AI) (a flat bar, not the
+frozen 5%-false-positive cutoffs; desklib's story cutoff is 0.74). `hd loop run --strategy surgery` (`src/hd/humanizer/surgery.py`)
+rewrites only the sentences that carry desklib's score (found by deleting each sentence and measuring the drop in desklib's raw logit),
+splices them back in place and leaves everything else byte for byte unchanged; desklib steers, fakespot judges.
+
+Result on 12 TRAIN stories (development only, `qwen3.8-27b`, up to 4 passes): it kept more meaning (mean similarity 0.95 against 0.90 for
+whole-text rewriting) but did not move the detectors: desklib still flagged 12 of 12 (every kept rewrite scored 0.76 to 1.00), our own detector still
+flagged 7 of 12 (against 1 of 8 in the whole-text runs), fakespot 8 of 12. **0 of 12 stories ended under 30% on ours and desklib**
+(95% interval 0-24%). Most runs ended "exhausted": every sentence had been rewritten once and desklib's score had not moved.
+Its signal is spread across the whole text, not carried by a few sentences, and editing sentences one at a time does not remove it.
+
+How far the existing humanizers are from the 30% bar (validation split, kept rewrites, `below_target`):
+
+| Variant (validation stories) | Ours + desklib under 30% | All three under 30% |
+|---|---|---|
+| v1 baseline (34) | 8 (24%) | 0 |
+| v2 faithful (34) | 3 (9%) | 0 |
+| desklib steering (21) | 5 (24%) | 1 |
+| strong mode (24) | 1 (4%) | 0 |
+
+Only 1 in 4 attempts reaches a desklib score under 0.30 at all (22 of 61 for v1), and most of those fail the guardrails (8 of 35 passed).
+So under the meaning-preserving guardrails nothing built here gets close to "consistently under 30%"; the fidelity/evasion limit of section 2 binds
+harder at this bar than at the frozen cutoffs.
+
 ## 3. Limitations
 
 - **One generator per genre, one human source per genre.** HC3's AI side is ChatGPT from December 2022; the story AI side is
