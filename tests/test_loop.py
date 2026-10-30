@@ -345,3 +345,19 @@ def test_steering_needs_the_independent_detector_and_its_cutoff():
     with pytest.raises(ValueError, match="both cutoffs"):
         choose_final(steps, CUT, 0.7, steer_external=True)
     assert choose_final(steps) == 1  # without steering a missing desklib score is irrelevant
+
+
+def test_loop_records_the_strength_and_logs_of_different_strengths_never_share_a_file():
+    from pathlib import Path as _P
+
+    from hd.loop import log_path
+
+    class Strong(FakeHumanizer):
+        strength = "strong"
+
+    result = run_loop(FakeDetector({"orig": 0.9, "r1": 0.1}), Strong(["r1"]), FakeChecker(), "orig", "story", our_cutoff=CUT)
+    assert result.strength == "strong" and result.to_dict()["strength"] == "strong"
+    assert go({"orig": 0.9, "r1": 0.1}, ["r1"])[0].strength == "faithful"  # the default, and what old logs mean
+    base = log_path(_P("d"), "val", "story", "full", "q/m", 400)
+    assert log_path(_P("d"), "val", "story", "full", "q/m", 400, "", "faithful") == base  # existing filenames are unchanged
+    assert log_path(_P("d"), "val", "story", "full", "q/m", 400, "", "strong") != base and "_strong" in log_path(_P("d"), "val", "story", "full", "q/m", 400, "", "strong").name

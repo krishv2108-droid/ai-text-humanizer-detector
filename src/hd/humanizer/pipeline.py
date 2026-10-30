@@ -63,8 +63,8 @@ def human_fk_range(cfg: dict[str, Any], genre: str) -> tuple[float, float] | Non
     return float(np.percentile(grades, lo_q)), float(np.percentile(grades, hi_q))
 
 
-def checker_for(cfg: dict[str, Any], embedder, scorer, profile: HumanProfile, genre: str) -> GuardrailChecker:
-    t = Thresholds.from_config(cfg)
+def checker_for(cfg: dict[str, Any], embedder, scorer, profile: HumanProfile, genre: str, strength: str = "faithful") -> GuardrailChecker:
+    t = Thresholds.from_config(cfg, strength)
     ceiling = profile.q(genre, "mean_surprisal", "p99")  # above nearly all real human text = looks incoherent
     return GuardrailChecker(embedder, replace(t, max_mean_surprisal=ceiling, fk_range=human_fk_range(cfg, genre)), scorer=scorer)
 

@@ -67,5 +67,10 @@ guardrails:
   # (AI stories read at grade ~8, human ~5), so max_fk_delta is now only the fallback when no human data exists.
   fk_percentiles: [1, 99]
   max_fk_delta: 3.0
+  # Rewrite strength = an operating point on the fidelity/evasion trade-off (reports/FINDINGS.md). It changes BOTH what the prompt asks
+  # for and which guardrail limits apply. Numbers and names, typos, reading level and length are checked identically in every mode.
+  strengths:
+    faithful: {min_doc_similarity: 0.80, max_dropped_frac: 0.20}   # keep every sentence's content
+    strong:   {min_doc_similarity: 0.72, max_dropped_frac: 0.30}   # may compress or drop minor descriptive detail
   max_novel_rare_rate: 0.01  # share of words that are both new and rare (typo/gibberish signal)
   max_missing_name_frac: 0.25  # share of the original's names that may vanish (any lost number is flagged)

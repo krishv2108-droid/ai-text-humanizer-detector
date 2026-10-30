@@ -178,10 +178,12 @@ def humanize_text(
     effort: str | None = None,
     steer_desklib: bool = False,
     use_judge: bool = False,
+    strength: str = "faithful",
 ) -> LoopResult:
     """Run the adversarial loop on one text, exactly as `hd loop run` does for the experiments.
 
-    `steer_desklib` lets desklib steer as well as our detector (stronger, but then desklib is no longer an independent check);
+    `strength` picks the operating point: faithful keeps every sentence's content, strong may compress minor detail (numbers and
+    names are protected either way). `steer_desklib` lets desklib steer as well as our detector (stronger, but then desklib is no longer an independent check);
     `use_judge` also scores every attempt with the third detector, which never decides anything.
     """
     if strategy not in STRATEGIES:
@@ -192,8 +194,8 @@ def humanize_text(
         raise RuntimeError("the independent detector is not loaded; enable it in the sidebar first")
     if use_judge and (res.judge is None or cuts["judge"] is None):
         raise RuntimeError("the third detector is not loaded (or has no cutoff); enable it in the sidebar first")
-    humanizer = Humanizer(client, model, res.profile, effort)
-    checker = checker_for(res.cfg, res.embedder, res.detector.scorer, res.profile, genre)
+    humanizer = Humanizer(client, model, res.profile, effort, strength)
+    checker = checker_for(res.cfg, res.embedder, res.detector.scorer, res.profile, genre, strength)
     return run_loop(res.detector, humanizer, checker, text, genre, strategy=strategy, our_cutoff=cuts["ours"],
                     ext_cutoff=cuts["external"] if external is not None else None, external=external,
                     max_iterations=max_rewrites, judge=res.judge if use_judge else None,

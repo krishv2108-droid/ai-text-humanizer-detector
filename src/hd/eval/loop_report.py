@@ -63,9 +63,10 @@ def outcome_table(records: list[dict[str, Any]], policy: str = "kept") -> pd.Dat
     frame = pd.DataFrame({"genre": [r["genre"] for r in records], "strategy": [r["strategy"] for r in records],
                           "model": [r.get("humanizer_model", "") for r in records],
                           "prompt": [r.get("prompt_version", "v1") for r in records],
-                          "steer": ["+".join(r.get("steer", ["ours"])) for r in records]})  # fmt: skip
+                          "steer": ["+".join(r.get("steer", ["ours"])) for r in records],
+                          "strength": [r.get("strength", "faithful") for r in records]})  # fmt: skip
     rows = []
-    for (genre, strategy, model, prompt, steer), idx in frame.groupby(["genre", "strategy", "model", "prompt", "steer"]).groups.items():
+    for (genre, strategy, model, prompt, steer, strength), idx in frame.groupby(["genre", "strategy", "model", "prompt", "steer", "strength"]).groups.items():
         recs = [records[i] for i in idx]
         for det in DETECTORS:
             pairs = [(_flagged(r, r["steps"][0], det), _flagged(r, outcome_step(r, policy), det)) for r in recs]
@@ -76,7 +77,7 @@ def outcome_table(records: list[dict[str, Any]], policy: str = "kept") -> pd.Dat
             detected = [(b, a) for b, a in pairs if b]
             kept = [r["steps"][r["final"]] for r in recs if r["final"] is not None]
             rows.append({
-                "genre": genre, "strategy": strategy, "model": model, "prompt": prompt, "steer": steer, "policy": policy, "detector": det,
+                "genre": genre, "strategy": strategy, "model": model, "prompt": prompt, "steer": steer, "strength": strength, "policy": policy, "detector": det,
                 "steers": STEER_KEY[det] in steer.split("+"), "n": n,
                 "flagged_before": kb / n, "before_lo": wilson_ci(kb, n)[0], "before_hi": wilson_ci(kb, n)[1],
                 "flagged_after": ka / n, "after_lo": wilson_ci(ka, n)[0], "after_hi": wilson_ci(ka, n)[1],

@@ -176,6 +176,22 @@ Validation split, raw human vs raw AI text ([results/external_metrics.csv](resul
   detector said 0.002 and desklib 1.000. One example proves nothing, but it fits the concern that ours leans
   on GPT-2 predictability, which a few quirky specifics can move.
 
+## Rewrite strength
+
+`hd loop run --strength faithful|strong` (and a radio button in the app's Humanize tab) picks an operating point on the
+fidelity-versus-evasion trade-off described above. It changes both what the prompt asks for and which guardrail limits apply:
+
+| | Faithful (default) | Strong |
+|---|---|---|
+| Prompt | keep every sentence's content | may compress or drop minor descriptive detail, restructure freely, bolder rhythm |
+| Meaning similarity at least | 0.80 | 0.72 |
+| Dropped sentences at most | 20% | 30% |
+| Numbers and names | must survive | must survive |
+| Typos, reading level, length | same checks | same checks |
+
+Strong mode should fool detectors more often because it keeps less of the original, and it changes more of your text. Whether it
+does, and at what cost, is measured separately and never pooled with faithful results (every log records the strength).
+
 ## The app (M8)
 
 ```bash

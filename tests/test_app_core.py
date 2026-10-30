@@ -100,8 +100,8 @@ class FakeDetector:
 class FakeHumanizer:
     instances = []
 
-    def __init__(self, client, model, profile=None, effort=None):
-        self.model, self.effort = model, effort
+    def __init__(self, client, model, profile=None, effort=None, strength="faithful"):
+        self.model, self.effort, self.strength = model, effort, strength
         FakeHumanizer.instances.append(self)
 
     def humanize(self, draft, genre, strategy, analysis=None, original=None, retry_note=None):
@@ -118,11 +118,15 @@ class FakeExternal:
         return [0.99 if t == "orig" else 0.4 for t in texts]
 
 
+seen_strengths: list[str] = []
+
+
 @pytest.fixture
 def patched(monkeypatch):
     FakeHumanizer.instances.clear()
     monkeypatch.setattr(app_core, "Humanizer", FakeHumanizer)
-    monkeypatch.setattr(app_core, "checker_for", lambda cfg, embedder, scorer, profile, genre: FakeChecker())
+    monkeypatch.setattr(app_core, "checker_for", lambda cfg, embedder, scorer, profile, genre, strength="faithful": seen_strengths.append(strength) or FakeChecker())
+    seen_strengths.clear()
 
 
 def test_humanize_text_uses_frozen_cutoffs_and_the_chosen_model(patched):
@@ -174,3 +178,11 @@ def test_humanize_text_refuses_steering_or_judging_without_the_detector_loaded(p
         humanize_text(res, object(), "orig", "story", strategy="full", model="m", max_rewrites=1, use_external=False, steer_desklib=True)
     with pytest.raises(RuntimeError, match="third detector"):
         humanize_text(res, object(), "orig", "story", strategy="full", model="m", max_rewrites=1, use_external=False, use_judge=True)
+
+
+def test_humanize_text_forwards_the_strength_to_both_the_prompt_and_the_guardrails(patched):
+    res = Resources({}, FakeDetector(), object(), object(), THRESHOLDS, None, None)
+    humanize_text(res, object(), "orig", "story", strategy="naive", model="m", max_rewrites=1, use_external=False, strength="strong")
+    assert FakeHumanizer.instances[-1].strength == "strong" and seen_strengths[-1] == "strong"  # prompt and limits move together
+    humanize_text(res, object(), "orig", "story", strategy="naive", model="m", max_rewrites=1, use_external=False)
+    assert FakeHumanizer.instances[-1].strength == "faithful" and seen_strengths[-1] == "faithful"

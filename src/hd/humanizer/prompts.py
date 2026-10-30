@@ -12,6 +12,9 @@ what makes a rewrite acceptable at all, not part of what is being ablated.
 from __future__ import annotations
 
 STRATEGIES = ("naive", "craft", "feedback", "full")
+# Rewrite strength: faithful keeps every sentence's content; strong may compress or drop minor descriptive detail and restructure
+# freely (and the guardrail limits are set to match, see configs/default.yaml). Names, numbers and plot stay protected in both.
+STRENGTHS = ("faithful", "strong")
 # Bump when the wording of any prompt block changes; every loop log records it, so results of different
 # versions are never mixed up. v1: the first pilot (10 validation stories). v2: sentence-coverage and
 # exact-facts requirements, and a moderated rhythm technique (v1 produced staccato caricature).
@@ -33,6 +36,18 @@ CONSTRAINTS = """Hard requirements:
 - Keep roughly the same length (within about 20%).
 - The result must be clean, coherent, readable prose. Do NOT add typos, misspellings, slang spam or deliberate errors, and do not write gibberish.
 - Plain text only: no headings, bullet points, bold or italics."""
+
+CONSTRAINTS_STRONG = """Hard requirements:
+- Keep the main events, the characters, the setting and the ending. Keep every name and every number exactly as written (a spelled-out number may become digits, or the reverse, but never change its value).
+- You may compress, merge or drop minor descriptive details, and reword or restructure freely. Do not invent new plot points, characters or claims.
+- Keep roughly the same length (within about 30%).
+- The result must be clean, coherent, readable prose. Do NOT add typos, misspellings, slang spam or deliberate errors, and do not write gibberish.
+- Plain text only: no headings, bullet points, bold or italics."""
+
+TECHNIQUES_STRONG_STORY = [
+    "Tell it the way a different person would: in plainer, everyday words, with your own phrasing and your own images instead of the draft's.",
+    "Vary sentence length boldly: about one sentence in three very short (under 6 words), most of medium length, a few long. Do not turn every sentence into a fragment.",
+]
 
 TECHNIQUES = {
     "story": [
@@ -61,8 +76,10 @@ TECHNIQUES = {
 }
 
 
-def _techniques_block(genre: str) -> str:
+def _techniques_block(genre: str, strength: str = "faithful") -> str:
     items = TECHNIQUES.get(genre, TECHNIQUES["essay"])
+    if strength == "strong" and genre == "story":
+        items = TECHNIQUES_STRONG_STORY + items[1:]  # replace only the rhythm technique; keep the rest
     return "Writing techniques to apply:\n" + "\n".join(f"- {t}" for t in items)
 
 
@@ -73,6 +90,7 @@ def build_prompt(
     feedback_text: str | None = None,
     original: str | None = None,
     retry_note: str | None = None,
+    strength: str = "faithful",
 ) -> tuple[str, str]:
     """Return (system, user) for one rewriting call.
 
@@ -84,10 +102,12 @@ def build_prompt(
         raise ValueError(f"unknown strategy {strategy!r}; expected one of {STRATEGIES}")
     if strategy in ("feedback", "full") and not feedback_text:
         raise ValueError(f"strategy {strategy!r} needs detector feedback")
+    if strength not in STRENGTHS:
+        raise ValueError(f"unknown strength {strength!r}; expected one of {STRENGTHS}")
 
-    parts = ["Rewrite the draft below so that it reads as though a person wrote it.", CONSTRAINTS]
+    parts = ["Rewrite the draft below so that it reads as though a person wrote it.", CONSTRAINTS if strength == "faithful" else CONSTRAINTS_STRONG]
     if strategy in ("craft", "full"):
-        parts.append(_techniques_block(genre))
+        parts.append(_techniques_block(genre, strength))
     if strategy in ("feedback", "full"):
         parts.append(feedback_text)  # type: ignore[arg-type]
     if original is not None and original.strip() != draft.strip():

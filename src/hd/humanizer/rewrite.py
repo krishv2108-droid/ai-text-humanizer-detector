@@ -66,8 +66,8 @@ def clean_output(raw: str, draft: str | None = None) -> tuple[str, list[str]]:
 
 
 class Humanizer:
-    def __init__(self, client: LLMClient, model: str, profile: HumanProfile | None = None, effort: str | None = None):
-        self.client, self.model, self.profile, self.effort = client, model, profile, effort
+    def __init__(self, client: LLMClient, model: str, profile: HumanProfile | None = None, effort: str | None = None, strength: str = "faithful"):
+        self.client, self.model, self.profile, self.effort, self.strength = client, model, profile, effort, strength
 
     def build_request(self, draft: str, genre: str, strategy: str = "full", analysis=None, original: str | None = None,
                       retry_note: str | None = None) -> tuple[str, str]:  # fmt: skip
@@ -77,7 +77,7 @@ class Humanizer:
             if analysis is None or self.profile is None:
                 raise ValueError(f"strategy {strategy!r} needs a detector analysis and a human profile")
             feedback_text = render_feedback(diagnose(analysis, self.profile, genre), analysis)
-        return build_prompt(draft, genre, strategy, feedback_text, original, retry_note)
+        return build_prompt(draft, genre, strategy, feedback_text, original, retry_note, self.strength)
 
     def humanize(self, draft: str, genre: str, strategy: str = "full", analysis=None, original: str | None = None,
                  retry_note: str | None = None) -> RewriteResult:  # fmt: skip

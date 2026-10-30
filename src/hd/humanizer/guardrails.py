@@ -59,9 +59,15 @@ class Thresholds:
     max_mean_surprisal: float | None = None  # GPT-2 ceiling for "incoherent"; set from human text
 
     @classmethod
-    def from_config(cls, cfg: dict[str, Any]) -> "Thresholds":
+    def from_config(cls, cfg: dict[str, Any], strength: str = "faithful") -> "Thresholds":
+        """The guardrail limits for a rewrite strength (config `guardrails.strengths`). Only the semantic limits differ by strength."""
         g = cfg.get("guardrails", {})
         fields = {k: g[k] for k in cls.__dataclass_fields__ if k in g}
+        strengths = g.get("strengths")
+        if strengths is not None:
+            if strength not in strengths:
+                raise ValueError(f"unknown strength {strength!r}; expected one of {sorted(strengths)}")
+            fields.update(strengths[strength])
         if "length_ratio" in fields:
             fields["length_ratio"] = tuple(fields["length_ratio"])
         return cls(**fields)

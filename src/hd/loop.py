@@ -75,6 +75,7 @@ class LoopResult:
     repair: bool = False  # whether failed rewrites were repaired in place (v2 default) or restarted from the last accepted draft
     judge_cutoff: float | None = None  # frozen cutoff of the third (judge) detector, if one was scored
     steer: list[str] = field(default_factory=lambda: ["ours"])  # which detectors decided anything: ["ours"] or ["ours", "external"]
+    strength: str = "faithful"  # rewrite strength (prompt variant + guardrail limits); logs written before it existed are faithful
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -199,7 +200,7 @@ def run_loop(
 
     return LoopResult(item_id, genre, strategy, our_cutoff, ext_cutoff, steps, choose_final(steps, our_cutoff, ext_cutoff, steer_external),
                       stop, getattr(humanizer, "model", ""), PROMPT_VERSION, repair, judge_cutoff,
-                      ["ours", "external"] if steer_external else ["ours"])  # fmt: skip
+                      ["ours", "external"] if steer_external else ["ours"], getattr(humanizer, "strength", "faithful"))  # fmt: skip
 
 
 def select_items(corpus: pd.DataFrame, split: str, genre: str, n: int, seed: int, *, unlock_test: bool = False,
@@ -216,10 +217,12 @@ def select_items(corpus: pd.DataFrame, split: str, genre: str, n: int, seed: int
     return part.sort_values("_order").head(n).drop(columns="_order").reset_index(drop=True)
 
 
-def log_path(processed: Path, split: str, genre: str, strategy: str, model: str, max_words: int | None = None, tag: str = "") -> Path:
-    """Where `hd loop run` writes its log for a given setup (shared with the report commands)."""
+def log_path(processed: Path, split: str, genre: str, strategy: str, model: str, max_words: int | None = None, tag: str = "",
+             strength: str = "faithful") -> Path:  # fmt: skip
+    """Where `hd loop run` writes its log for a given setup (shared with the report commands). Non-default strengths get their own file."""
     short = f"_le{max_words}w" if max_words else ""
-    return processed / f"loop_{split}_{genre}_{strategy}_{model.split('/')[-1]}{short}{'_' + tag if tag else ''}.jsonl"
+    mode = "" if strength == "faithful" else f"_{strength}"
+    return processed / f"loop_{split}_{genre}_{strategy}_{model.split('/')[-1]}{short}{mode}{'_' + tag if tag else ''}.jsonl"
 
 
 def run_batch(items: Iterable[dict[str, Any]], out_path: Path, run_one: Callable[[dict[str, Any]], LoopResult]) -> dict[str, Any]:
@@ -261,10 +264,11 @@ def summarize(records: list[dict[str, Any]]) -> pd.DataFrame:
     frame = pd.DataFrame({"genre": [r["genre"] for r in records], "strategy": [r["strategy"] for r in records],
                           "model": [r.get("humanizer_model", "") for r in records],
                           "prompt": [r.get("prompt_version", "v1") for r in records],
-                          "steer": ["+".join(r.get("steer", ["ours"])) for r in records]})  # fmt: skip
-    for (genre, strategy, model, prompt, steer), idx in frame.groupby(["genre", "strategy", "model", "prompt", "steer"]).groups.items():
+                          "steer": ["+".join(r.get("steer", ["ours"])) for r in records],
+                          "strength": [r.get("strength", "faithful") for r in records]})  # fmt: skip
+    for (genre, strategy, model, prompt, steer, strength), idx in frame.groupby(["genre", "strategy", "model", "prompt", "steer", "strength"]).groups.items():
         recs = [records[i] for i in idx]
-        row: dict[str, Any] = {"genre": genre, "strategy": strategy, "model": model, "prompt": prompt, "steer": steer, "n": len(recs)}
+        row: dict[str, Any] = {"genre": genre, "strategy": strategy, "model": model, "prompt": prompt, "steer": steer, "strength": strength, "n": len(recs)}
         row["ours_flagged_before"] = sum(r["steps"][0]["ours"] > r["our_cutoff"] for r in recs) / len(recs)
         row["ours_flagged_after"] = sum(_after(r, "ours") > r["our_cutoff"] for r in recs) / len(recs)
         if all(r["ext_cutoff"] is not None and r["steps"][0]["external"] is not None for r in recs):

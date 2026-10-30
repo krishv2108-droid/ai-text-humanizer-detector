@@ -311,3 +311,12 @@ def test_report_writer_handles_the_judge_and_records_the_three_detector_claim(tm
     assert written["before_after"].stat().st_size > 1000 and written["iterations"].stat().st_size > 1000
     old_style = write_loop_report(sample_records(), tmp_path, "old", "4 texts")  # logs from before the judge existed still report
     assert old_style["before_after"].exists()
+
+
+def test_outcome_table_never_pools_strengths():
+    faithful, strong = judged_records(), judged_records()
+    for r in strong:
+        r["strength"] = "strong"
+    t = outcome_table(faithful + strong).set_index(["strength", "detector"])
+    assert set(t.index.get_level_values("strength")) == {"faithful", "strong"} and (t["n"] == 3).all()
+    assert outcome_table(sample_records())["strength"].eq("faithful").all()  # logs from before strengths existed count as faithful

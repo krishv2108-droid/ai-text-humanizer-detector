@@ -91,6 +91,9 @@ def humanize_tab(res, genre: str, use_external: bool, use_judge: bool) -> None:
     models = list(dict.fromkeys([cfg["llm"]["humanizer_model"]] + KNOWN_MODELS))
     model = c2.selectbox("Humanizer model (Groq)", models, help="Each Groq model has its own daily token allowance on the free tier.")
     rewrites = c3.slider("Max rewrites", 1, 4, 2, help="The loop stops early once our detector stops flagging a rewrite that keeps the meaning.")
+    strength = st.radio("Rewrite strength", ["faithful", "strong"], horizontal=True, key="hum_strength",
+                        help="Faithful keeps every sentence's content (meaning similarity of at least 0.80). Strong may compress or drop minor descriptive "
+                             "detail (at least 0.72): more likely to fool detectors, but it changes more of your text. Numbers and names are protected in both.")  # fmt: skip
     steer = st.checkbox("Let desklib steer the rewrite too (stronger, uses more quota; desklib is then no longer an independent check)",
                         value=False, key="hum_steer", disabled=not use_external,
                         help="Needs the desklib option in the sidebar. The third detector (fakespot) never steers, so it stays a fair check.")  # fmt: skip
@@ -110,13 +113,13 @@ def humanize_tab(res, genre: str, use_external: bool, use_judge: bool) -> None:
         from hd.humanizer.rewrite import Humanizer
 
         analysis = res.detector.analyze(text)
-        system, user = Humanizer(None, model, res.profile).build_request(analysis.text, genre, strategy, analysis)  # type: ignore[arg-type]
+        system, user = Humanizer(None, model, res.profile, strength=strength).build_request(analysis.text, genre, strategy, analysis)  # type: ignore[arg-type]
         st.code(f"--- SYSTEM ---\n{system}\n\n--- USER ---\n{user}", language="text", wrap_lines=True)
         return
     try:
         client = make_client(cfg, resolve_path(cfg, "cache"))
         with st.spinner("Rewriting and scoring (each rewrite is one API call plus local scoring)..."):
-            result = humanize_text(res, client, text, genre, strategy=strategy, model=model, max_rewrites=rewrites,
+            result = humanize_text(res, client, text, genre, strategy=strategy, model=model, max_rewrites=rewrites, strength=strength,
                                    use_external=use_external and res.external is not None, effort=cfg["llm"].get("humanizer_effort"),
                                    steer_desklib=steer and use_external and res.external is not None, use_judge=use_judge and res.judge is not None)  # fmt: skip
     except DailyLimitReached as err:
@@ -150,7 +153,7 @@ def humanize_tab(res, genre: str, use_external: bool, use_judge: bool) -> None:
             for s in result.steps[1:]:
                 st.markdown(f"**Rewrite {s.iteration}** rejected: {'; '.join(s.flags)}")
                 st.text(s.text)
-    st.caption(f"Stopped because: {result.stop_reason}. Tokens used this run: "
+    st.caption(f"Strength: {result.strength}. Stopped because: {result.stop_reason}. Tokens used this run: "
                f"{sum(s.input_tokens + s.output_tokens for s in result.steps):,}.")  # fmt: skip
 
 

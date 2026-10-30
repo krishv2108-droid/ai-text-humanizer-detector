@@ -125,3 +125,13 @@ def test_humanize_reports_a_used_up_daily_limit_clearly(app, monkeypatch):
     app.text_area(key="hum_text").set_value("The cat sat. However, it left. It was late.").run()
     app.button(key="hum_go").click().run()
     assert not app.exception and any("daily limit" in e.value for e in app.error)
+
+
+def test_dry_run_shows_the_strong_prompt_when_strong_is_chosen(app):
+    app.text_area(key="hum_text").set_value("The cat sat. However, it left. It was late.").run()
+    app.checkbox(key="hum_dry").check().run()
+    app.radio(key="hum_strength").set_value("strong").run()
+    app.button(key="hum_go").click().run()
+    assert not app.exception
+    prompt = app.code[0].value
+    assert "compress, merge or drop minor descriptive details" in prompt and "sentence by sentence" not in prompt

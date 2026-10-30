@@ -329,6 +329,52 @@ def test_restructuring_summary_reports_separation_and_flag_rates():
     assert t.loc["swap30", "flagged_when_damaged"] == 1.0 and t.loc["swap30", "restructuring_p95"] == pytest.approx(0.04)
 
 
+def test_strong_strength_changes_the_prompt_but_keeps_facts_protected():
+    fb = "An automated detector scored this draft 90% likely to be AI-written."
+    faithful = build_prompt("Some draft.", "story", "full", fb)[1]
+    strong = build_prompt("Some draft.", "story", "full", fb, strength="strong")[1]
+    assert "sentence by sentence" in faithful and "sentence by sentence" not in strong  # strong may drop minor detail
+    assert "compress, merge or drop minor descriptive details" in strong and "compress" not in faithful
+    assert "one sentence in three" in strong and "one sentence in four" in faithful  # the rhythm technique is the bolder one
+    for text in (faithful, strong):  # numbers and names are never negotiable
+        assert "every number" in text and "exactly as written" in text and "Do NOT add typos" in text
+    assert "Do not invent new plot points" in strong
+    essay_f, essay_s = build_prompt("d.", "essay", "craft")[1], build_prompt("d.", "essay", "craft", strength="strong")[1]
+    assert essay_f.split("Writing techniques")[1] == essay_s.split("Writing techniques")[1]  # the technique list only differs for stories
+    with pytest.raises(ValueError, match="unknown strength"):
+        build_prompt("d.", "story", "naive", strength="reckless")
+
+
+def test_humanizer_passes_its_strength_into_the_request():
+    prompt_for = lambda strength: Humanizer(None, "m", None, None, strength).build_request("A draft.", "story", "naive")[1]  # noqa: E731
+    assert "compress, merge or drop" in prompt_for("strong") and "compress" not in prompt_for("faithful")
+
+
+def test_guardrail_limits_follow_the_strength_but_only_the_semantic_ones():
+    cfg = {"guardrails": {"min_doc_similarity": 0.5, "max_dropped_frac": 0.5, "length_ratio": [0.7, 1.4], "max_novel_rare_rate": 0.01,
+                          "strengths": {"faithful": {"min_doc_similarity": 0.80, "max_dropped_frac": 0.20},
+                                        "strong": {"min_doc_similarity": 0.72, "max_dropped_frac": 0.30}}}}  # fmt: skip
+    faithful, strong = Thresholds.from_config(cfg), Thresholds.from_config(cfg, "strong")
+    assert (faithful.min_doc_similarity, faithful.max_dropped_frac) == (0.80, 0.20)
+    assert (strong.min_doc_similarity, strong.max_dropped_frac) == (0.72, 0.30)
+    assert faithful.length_ratio == strong.length_ratio == (0.7, 1.4) and faithful.max_novel_rare_rate == strong.max_novel_rare_rate == 0.01
+    assert faithful.max_missing_name_frac == strong.max_missing_name_frac  # facts are checked the same way in every mode
+    with pytest.raises(ValueError, match="unknown strength"):
+        Thresholds.from_config(cfg, "reckless")
+    assert Thresholds.from_config({"guardrails": {"min_doc_similarity": 0.6}}, "strong").min_doc_similarity == 0.6  # old configs still load
+
+
+def test_strong_mode_accepts_a_looser_rewrite_but_still_rejects_a_changed_number():
+    cfg = {"guardrails": {"strengths": {"faithful": {"min_doc_similarity": 0.99, "max_dropped_frac": 0.0},
+                                        "strong": {"min_doc_similarity": 0.20, "max_dropped_frac": 1.0}}}}  # fmt: skip
+    rewrite = STORY.replace("She lit the lamp and waited. ", "")  # a sentence is gone
+    make = lambda strength: GuardrailChecker(FakeEmbedder(), replace(Thresholds.from_config(cfg, strength), length_ratio=(0, 99), fk_range=(-99, 99)),  # noqa: E731
+                                              RareWordCounter(FakeTokenizer(COMMON)))
+    assert not make("faithful").check(STORY, rewrite).ok  # dropped content is flagged
+    assert make("strong").check(STORY, rewrite).ok  # allowed to drop a minor detail
+    assert any("numbers changed" in f for f in make("strong").check(STORY, STORY.replace("forty", "fourteen")).flags)  # but never a fact
+
+
 def test_inject_typos_is_deterministic_and_respects_rate():
     a, b = inject_typos(STORY, 0.5, random.Random(1)), inject_typos(STORY, 0.5, random.Random(1))
     assert a == b and inject_typos(STORY, 0.0, random.Random(1)) == STORY

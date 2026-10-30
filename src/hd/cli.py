@@ -63,6 +63,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--max-words", type=int, help="only texts up to this many words (needed for models with small output caps)")
     run.add_argument("--max-iterations", type=int, help="default: loop.max_iterations from the config")
     run.add_argument("--no-external", action="store_true", help="skip the independent detector (faster; fewer claims)")
+    run.add_argument("--strength", choices=["faithful", "strong"], default="faithful", help="faithful keeps every sentence's content (similarity >= 0.80); strong may compress minor detail (>= 0.72)")
     run.add_argument("--steer-desklib", action="store_true", help="let desklib steer too: stop only when both detectors pass and keep the best worst-case rewrite (fakespot, the judge, never steers)")
     run.add_argument("--no-judge", action="store_true", help="skip the third detector (fakespot), which is only ever a judge")
     run.add_argument("--no-repair", action="store_true", help="v1 behaviour: after a rejected rewrite restart from the last accepted draft with a generic note")
@@ -342,8 +343,8 @@ def _run_loop(args: argparse.Namespace, cfg: dict) -> int:
     profile = HumanProfile.load_or_build(cfg, detector.scorer)
     llm = cfg["llm"]
     model = args.model or llm["humanizer_model"]
-    humanizer = Humanizer(make_client(cfg, resolve_path(cfg, "cache")), model, profile, llm["humanizer_effort"])
-    checker = checker_for(cfg, SentenceEmbedder(), detector.scorer, profile, args.genre)
+    humanizer = Humanizer(make_client(cfg, resolve_path(cfg, "cache")), model, profile, llm["humanizer_effort"], args.strength)
+    checker = checker_for(cfg, SentenceEmbedder(), detector.scorer, profile, args.genre, args.strength)
     external, ext_cut = None, None
     if not args.no_external:
         from hd.detector.external import DesklibDetector
@@ -367,7 +368,7 @@ def _run_loop(args: argparse.Namespace, cfg: dict) -> int:
                          max_words=args.max_words, unlock_test=on_test)
     if items.empty:
         raise RuntimeError(f"no AI {args.genre} texts in the {args.split} split; generate/build them first")
-    out = Path(args.out) if args.out else log_path(processed, args.split, args.genre, args.strategy, model, args.max_words, args.tag)
+    out = Path(args.out) if args.out else log_path(processed, args.split, args.genre, args.strategy, model, args.max_words, args.tag, args.strength)
     max_iter = args.max_iterations or cfg["loop"]["max_iterations"]
 
     def run_one(item: dict):
