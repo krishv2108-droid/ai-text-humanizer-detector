@@ -113,6 +113,26 @@ intervals overlap, so this selects a candidate; it is not a result. This was the
 once in `faithful` mode and once in `strong` mode (the revised "s2" prompt); results are reported separately and paired on the stories
 both runs completed. Logs of the first strong prompt are kept as `*_strong_s1.jsonl`.
 
+**Validation of the frozen modes (protocol above; qwen3.8-27b, `full` strategy, our detector steers only, fakespot judges).**
+Faithful completed all 34 stories; strong completed 24 before both API keys hit their daily limits (the other 10 were not run).
+
+| 34 validation stories | Fools our detector | Fools desklib | Fools fakespot | Fools all three | Meaning kept |
+|---|---|---|---|---|---|
+| v1 baseline (old prompt, no fact guard) | 32 | 11 (19-49%) | 15 (29-61%) | 8 (12-40%) | 0.87 |
+| v2 faithful | 29 | 7 (10-37%) | 12 (21-52%) | 5 (6-30%) | 0.91 |
+
+| Paired, the 24 stories both modes completed | Fools desklib | Fools fakespot | Fools all three | Meaning kept | Tokens per story |
+|---|---|---|---|---|---|
+| faithful | 6 (12-45%) | 8 (18-53%) | 4 (7-36%) | 0.91 | 2,842 |
+| strong | 5 (9-40%) | 10 (24-61%) | 4 (7-36%) | 0.89 | 2,834 |
+
+Per story, strong versus faithful: on fakespot 6 only strong, 4 only faithful (sign test p = 0.75); on desklib 3 versus 4 (p = 1.0); on all
+three 3 versus 3 (p = 1.0). **Strong mode shows no measurable gain, and the 4-of-12 versus 2-of-12 on the development stories did not
+replicate**: that was noise in a 12-story sample, which is why the validation protocol was fixed in advance. v2 faithful keeps more meaning than
+v1 (0.91 vs 0.87) and cannot lose a number or name, and fools somewhat fewer detectors (5 vs 8 of 34 on all three), but the intervals overlap
+heavily, so v1 versus v2 is not settled either. Across every variant and sample the system ends up fooling all three detectors on roughly
+15-25% of short stories, which is the fidelity-versus-evasion limit described next, not a gap that a prompt, steering or strength setting closed.
+
 **Why it plateaus: fidelity versus evasion** (`results/frontier_story_replay_v1_v2dev.csv`; 100 rewrites with desklib scores):
 
 | Meaning similarity of the rewrite | Fooled desklib | Passed the guardrails |

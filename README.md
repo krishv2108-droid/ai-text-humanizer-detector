@@ -35,6 +35,9 @@ What we learned (details and limitations in `reports/FINDINGS.md`):
   floor of 0.80, 15% at 0.85 and 6% at 0.88 or above (`results/frontier_story_replay_v1_v2dev.csv`).
 - **"Make it sound human" alone does nothing** (naive prompt: 100% still flagged). The model family matters too: the same loop
   with `gpt-oss-20b` or `gpt-oss-120b` (the story generator's family) makes tiny edits (similarity 0.97) and fools neither detector.
+- **On all 34 validation stories, every variant lands at roughly 15-25% fooling all three detectors.** v1: 8 of 34 (24%; 12-40%);
+  v2 faithful: 5 of 34 (15%; 6-30%), but with more meaning kept (0.91 vs 0.87) and no lost numbers or names; strong mode, paired on the
+  24 stories it completed: 4 of 24 against faithful's 4 of 24. A 4-of-12 versus 2-of-12 edge for strong on the development stories was noise.
 - **Humanizer v2 (repair mode, two-sided feedback, number-and-name guard) did not measurably raise that 32%.** On 12 train
   stories it kept more meaning (0.90) and never lost a number, but fooled both detectors on 2 of 12 (5-45%); a further wording
   lever (v3) was tried and reverted (no effect, paired p = 0.68). With n = 12 these runs cannot rule out a small difference.
