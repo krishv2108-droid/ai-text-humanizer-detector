@@ -268,8 +268,7 @@ test-split number:
 - **Desklib steering** and the **prompt-v1 baseline**: validation only (section 2).
 - The **old reading-level delta rule**: the human-range rule is the only one applied to the test run.
 - **Essay and casual humanizing**: not run at any split.
-- **The manual commercial-detector check** (`reports/manual_detector_log.md`) is a separate small hand test; its results are
-  filled in below once done.
+- **Commercial detectors**: only a tiny hand check with one tool, section 4e.
 
 **4d. Caveats specific to this run.** One humanizer model, one prompt, short stories (at most 400 words; the longer test stories were
 excluded because the humanizer model's output cap makes them infeasible), n = 26 so each story moves a rate by about 4 points. The
@@ -277,6 +276,28 @@ run was resumed several times across rate limits, which is why `results/test_acc
 settings were identical each time (a larger run extends the same deterministic sample). Fakespot was used as a judge on both
 validation and test, but its cutoff was set on validation only.
 
+
+### 4e. Hand check with a commercial detector (ZeroGPT, free web tool)
+
+Run by hand on 2026-10-29 (`reports/manual_detector_log.csv`; protocol in `reports/manual_detector_log.md`). Blind: 10 texts shuffled,
+the key opened only after all scores were recorded. The texts are 5 raw AI stories and the 5 faithful-mode rewrites of the same
+stories, taken from the **validation** log (not the test split), plus 3 human controls (the author's own college-application
+essays; a different genre from the stories). The humanizer was never tuned against ZeroGPT.
+
+| Text kind | ZeroGPT AI score per text | Mean | Scored 50% or more |
+|---|---|---|---|
+| raw AI (5) | 100, 100, 100, 85, 85.8 | 94.2% | 5 of 5 |
+| humanized (5) | 100, 96, 75.6, 64.3, 34.7 | 74.1% | 4 of 5 |
+| own human writing (3) | 0, 0, 0 | 0% | 0 of 3 |
+
+Paired by story, the rewrite scored lower than its raw original in 4 of 5 pairs (drops of 50, 36, 24 and 4 points) and
+higher in 1 (85.8 to 100). Only one rewrite fell below 50%.
+
+**Reading it honestly.** This agrees with the main result: the humanizer lowers a detector it never saw, but most rewrites are still scored as AI.
+It is also not a benchmark. n = 5 pairs, so one text moves a rate by 20 points; one tool only; 50% is my cut for "flagged",
+not the tool's own verdict; the controls are essays, not stories. **GPTZero was also tried and its results are discarded**: its free credits ran out
+during the session and its scores (30%, then 100% on every later text) could not be trusted, so no GPTZero number is used anywhere.
+The raw GPTZero rows stay in the log, marked set aside.
 
 ## Reproduce
 

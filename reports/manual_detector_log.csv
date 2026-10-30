@@ -1,14 +1,19 @@
 sample,tool,tool_version_or_mode,date,ai_score_percent,verdict_as_shown,notes
-sample-01,,,,,,
-sample-02,,,,,,
-sample-03,,,,,,
-sample-04,,,,,,
-sample-05,,,,,,
-sample-06,,,,,,
-sample-07,,,,,,
-sample-08,,,,,,
-sample-09,,,,,,
-sample-10,,,,,,
-sample-own-1,,,,,,
-sample-own-2,,,,,,
-sample-own-3,,,,,,
+sample-01,GPTZero,free web tool,2026-10-29,30.0,(verdict wording not given),SET ASIDE: free credits exhausted / unreliable; not used in any summary
+sample-01,ZeroGPT,free web tool,2026-10-29,100.0,(verdict wording not given),
+sample-02,GPTZero,free web tool,2026-10-29,100.0,highly confident AI,SET ASIDE: free credits exhausted / unreliable; not used in any summary
+sample-02,ZeroGPT,free web tool,2026-10-29,100.0,highly confident AI,
+sample-03,GPTZero,free web tool,2026-10-29,100.0,highly confident AI,SET ASIDE: free credits exhausted / unreliable; not used in any summary
+sample-03,ZeroGPT,free web tool,2026-10-29,34.7,moderately confident (wording as relayed),
+sample-04,GPTZero,free web tool,2026-10-29,100.0,(verdict wording not given),SET ASIDE: free credits exhausted / unreliable; not used in any summary
+sample-04,ZeroGPT,free web tool,2026-10-29,100.0,(verdict wording not given),
+sample-05,GPTZero,free web tool,2026-10-29,100.0,highly confident AI,SET ASIDE: free credits exhausted / unreliable; not used in any summary
+sample-05,ZeroGPT,free web tool,2026-10-29,85.0,highly confident AI,
+sample-06,ZeroGPT,free web tool,2026-10-29,64.3,Your Text is AI/GPT Generated,
+sample-07,ZeroGPT,free web tool,2026-10-29,96.0,Your Text is AI/GPT Generated,
+sample-08,ZeroGPT,free web tool,2026-10-29,100.0,Your Text is AI/GPT Generated,
+sample-09,ZeroGPT,free web tool,2026-10-29,75.6,Your Text is AI/GPT Generated,
+sample-10,ZeroGPT,free web tool,2026-10-29,85.8,Your Text is AI/GPT Generated,
+sample-own-1,ZeroGPT,free web tool,2026-10-29,0.0,Your Text is Human written,
+sample-own-2,ZeroGPT,free web tool,2026-10-29,0.0,Your Text is Human written,
+sample-own-3,ZeroGPT,free web tool,2026-10-29,0.0,Your Text is Human written,
