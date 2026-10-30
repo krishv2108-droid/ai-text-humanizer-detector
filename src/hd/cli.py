@@ -105,6 +105,8 @@ def build_parser() -> argparse.ArgumentParser:
     adv.add_argument("--unlock-test", action="store_true", help="confirm that this run reads the held-out test split")
     adv.add_argument("--loop-log", action="append", default=[], help="test-split loop logs whose rewrites to score (repeatable)")
     adv.add_argument("--again", action="store_true", help="repeat the one-time test scoring on purpose (recorded in the log)")
+    jj = ev_sub.add_parser("judge-joint", help="all-detector rate with MAGE added to ours/desklib/fakespot, from loop logs only (never opens the test split)")
+    jj.add_argument("--log", action="append", required=True, help="a loop log (repeatable)")
     mk = ev_sub.add_parser("manual-kit", help="blind sample files + log template for testing commercial AI detectors by hand")
     mk.add_argument("--log", required=True, help="a loop log (use a validation log; the kit exports AI text and rewrites only)")
     mk.add_argument("--n", type=int, default=5, help="how many raw/rewrite pairs")
@@ -470,6 +472,26 @@ def _run_eval(args: argparse.Namespace, cfg: dict) -> int:
         print(pd.read_csv(written["detectors"]).round(3).to_string(index=False))
         for name, path in written.items():
             print(f"  {name}: {path}")
+    elif cmd == "judge-joint":
+        import json as _json
+
+        import pandas as pd
+
+        from hd.data.splits import load_split
+        from hd.detector.external import MageDetector
+        from hd.eval.judge_joint import judge_cutoff, judge_joint
+
+        corpus = pd.read_parquet(processed / "corpus.parquet")
+        val = load_split(corpus[corpus["has_pair"]], "val")  # validation only: the cutoff never depends on the test split
+        mage = MageDetector()
+        cut = judge_cutoff(mage, val[(val["genre"] == "story") & (val["label"] == 0)]["text"].tolist())
+        rows = []
+        for path in args.log:
+            records = [_json.loads(line) for line in open(path)]
+            rows.append({"log": Path(path).name, "mage_cutoff": round(cut, 4), **judge_joint(records, mage, cut)})
+        table = pd.DataFrame(rows)
+        print(table.round(3).to_string(index=False))
+        table.round(4).to_csv(results / "final" / "judge_joint.csv", index=False)
     elif cmd == "adversarial":
         from hd.eval.adversarial import run_adversarial, run_adversarial_test
 

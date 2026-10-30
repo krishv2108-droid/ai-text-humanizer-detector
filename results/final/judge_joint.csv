@@ -1,0 +1,3 @@
+log,mage_cutoff,n,judge_flagged_raw,judge_flagged_delivered,judge_caught_then_evaded,loop_detectors_all_clear,all_detectors_clear,rate,lo,hi
+loop_val_story_full_qwen3.8-27b_le400w_v2.jsonl,0.9994,34,16,7,9,5,5,0.1471,0.0645,0.3013
+loop_test_story_full_qwen3.8-27b_le400w_v2.jsonl,0.9994,26,11,2,9,2,2,0.0769,0.0214,0.2414

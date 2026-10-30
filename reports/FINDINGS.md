@@ -396,7 +396,7 @@ On request, two further open-source detectors were downloaded (`yaful/MAGE`, 595
 
 Against MAGE the humanizer does better than against any other independent detector: the average MAGE P(AI) falls from 0.77 to 0.29 on the test stories. The all-detector rate does not
 change, because MAGE is lenient and never the binding constraint: fooling ours + desklib + fakespot + MAGE is 5 of 34 on validation (15%; 6-30%) and **2 of 26 on test (8%; 2-24%)**,
-the same stories as without MAGE. So "the best it can do" against every independent detector we have is still about 8-15% on short stories.
+the same stories as without MAGE (`hd eval judge-joint --log ...`, which reads only loop logs and the validation split, writes `results/final/judge_joint.csv`). So "the best it can do" against every independent detector we have is still about 8-15% on short stories.
 
 Test-split reads so far, all logged and each disclosed: the main evaluation (4a-4b), the retrained detector (4f), and this check (scoring MAGE on the test human and raw AI stories; its
 rewrite scores come from the existing test log). Cutoffs were fixed on validation beforehand and nothing was changed after looking.

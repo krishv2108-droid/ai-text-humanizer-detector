@@ -17,7 +17,7 @@ dependencies = [
 #   uv sync --extra nlp   (spaCy + en_core_web_sm model, textstat)
 #   uv sync --extra ml    (PyTorch, transformers)
 #   uv sync --extra embed (sentence-transformers, used from M5)
-#   uv sync --extra llm   (Anthropic SDK)
+#   uv sync --extra llm   (OpenAI-compatible SDK for Groq, plus the Anthropic SDK)
 #   uv sync --extra app   (Streamlit)
 [project.optional-dependencies]
 data = ["pyarrow>=15"]

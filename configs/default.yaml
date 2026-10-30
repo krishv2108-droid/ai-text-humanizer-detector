@@ -37,7 +37,7 @@ llm:
   # (and models to claude-* ids) if you ever use an Anthropic key.
   provider: groq
   generation_model: openai/gpt-oss-120b   # writes the AI side of the story pairs
-  humanizer_model: openai/gpt-oss-120b    # rewrites AI text
+  humanizer_model: openai/gpt-oss-120b    # rewrites AI text. NOTE: every reported result used qwen/qwen3.8-27b, passed as `--model` (gpt-oss makes near-copies)
   generation_effort: low     # only used by reasoning models such as openai/gpt-oss-120b (low|medium|high)
   humanizer_effort: low
   generation_max_tokens: 2000 # ceiling; each story's budget is derived from its target length
@@ -54,8 +54,8 @@ loop:
   # may still flag it, and the humanizer is what is being evaluated).
 
 guardrails:
-  # Provisional. `hd humanizer calibrate-guardrails` simulates failures (see results/guardrail_calibration.csv);
-  # false-positive rates on REAL rewrites are unmeasured until an API key is available.
+  # `hd humanizer calibrate-guardrails` simulates failures (see results/guardrail_calibration.csv) and `hd humanizer check-restructuring`
+  # checks that splitting or merging sentences is not flagged; how often real rewrites pass is in reports/FINDINGS.md section 2.
   min_doc_similarity: 0.80   # whole-text embedding similarity to the original
   dropped_sim: 0.50          # original sentence with no rewrite sentence above this = dropped
   max_dropped_frac: 0.20
